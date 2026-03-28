@@ -350,13 +350,13 @@ function ResourcesIcon() {
 // --- Deliverable artifacts for "What You Get" ---
 
 const deliverables: { label: string; detail: string; icon: ReactNode }[] = [
-  { label: 'Reading', detail: 'Interactive HTML with embedded widgets', icon: <DocIcon /> },
-  { label: 'Practice Quiz', detail: 'Gamified with confidence calibration', icon: <QuizCheckIcon /> },
-  { label: 'In-Class Quiz', detail: '5 shuffled versions + answer keys', icon: <ClipboardListIcon /> },
-  { label: 'Slides', detail: 'PowerPoint with speaker notes', icon: <SlidesIcon /> },
-  { label: 'Audiobook', detail: 'AI-narrated with pro voices', icon: <AudioIcon /> },
-  { label: 'Teaching Pack', detail: 'Discussions, activities, starters', icon: <ResourcesIcon /> },
-  { label: 'Weekly Challenge', detail: 'Mastery-gated with SCORM for Blackboard', icon: <QuizCheckIcon /> },
+  { label: 'Reading', detail: 'Interactive chapter with embedded visualisations', icon: <DocIcon /> },
+  { label: 'Practice Quiz', detail: 'Game-like self-test with instant feedback', icon: <QuizCheckIcon /> },
+  { label: 'In-Class Quiz', detail: '5 unique printed versions + answer key', icon: <ClipboardListIcon /> },
+  { label: 'Weekly Challenge', detail: 'Mastery assessment that uploads to your LMS', icon: <QuizCheckIcon /> },
+  { label: 'Slides', detail: 'Ready-to-present with speaker notes', icon: <SlidesIcon /> },
+  { label: 'Audiobook', detail: 'Professional narration students can listen to anywhere', icon: <AudioIcon /> },
+  { label: 'Teaching Pack', detail: 'Discussion prompts, activities, and facilitation guides', icon: <ResourcesIcon /> },
 ];
 
 // --- Pipeline stages ---
@@ -634,7 +634,7 @@ export function LandingPage() {
         >
           <h2 className="text-3xl font-bold mb-4">A complete course package, per class</h2>
           <p className="text-text-secondary max-w-lg mx-auto">
-            Six deliverables for every class. Download individually or as a single ZIP.
+            Seven deliverables for every class. Download individually or as a single ZIP.
           </p>
         </motion.div>
 
