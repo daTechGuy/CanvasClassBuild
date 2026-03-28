@@ -93,6 +93,89 @@ export interface InClassQuizQuestion {
   }>;
 }
 
+// ── Weekly Challenge types ──
+
+export type ChallengeQuestionType =
+  | 'mcq' | 'two-stage' | 'assertion-reason'
+  | 'agreement-matrix' | 'confidence-weighted'
+  | 'slider-estimation' | 'boss';
+
+export type ChallengeTier = 'warmup' | 'core' | 'challenge' | 'boss';
+
+export type AssertionReasonRelationship =
+  | 'both-true-reason-explains'
+  | 'both-true-reason-independent'
+  | 'a-true-b-false'
+  | 'a-false-b-true'
+  | 'both-false';
+
+export type AgreementCategory = 'always' | 'sometimes' | 'never';
+
+export interface ChallengeQuestionBase {
+  type: ChallengeQuestionType;
+  tier: ChallengeTier;
+  stem: string;
+  feedback: { correct: string; incorrect: string; wrongReason?: string };
+  difficulty: 1 | 2 | 3;
+  isSpacedReview?: boolean;
+  sourceChapter?: number;
+  /** 1-2 alternative versions of this question. At runtime one variant is randomly
+   *  selected and its fields merged over the base question, producing a unique instance
+   *  per attempt. Fields not present in the variant fall through to the base. */
+  variants?: Array<Record<string, unknown>>;
+}
+
+export interface ChallengeMcq extends ChallengeQuestionBase {
+  type: 'mcq';
+  options: string[];
+  correctIndex: number;
+}
+
+export interface ChallengeTwoStage extends ChallengeQuestionBase {
+  type: 'two-stage' | 'boss';
+  options: string[];
+  correctIndex: number;
+  justifications: string[];
+  correctJustificationIndex: number;
+}
+
+export interface ChallengeAssertionReason extends ChallengeQuestionBase {
+  type: 'assertion-reason';
+  assertion: string;
+  reason: string;
+  correctRelationship: AssertionReasonRelationship;
+}
+
+export interface ChallengeAgreementMatrix extends ChallengeQuestionBase {
+  type: 'agreement-matrix';
+  statements: Array<{ text: string; correct: AgreementCategory }>;
+}
+
+export interface ChallengeConfidenceWeighted extends ChallengeQuestionBase {
+  type: 'confidence-weighted';
+  options: string[];
+  correctIndex: number;
+}
+
+export interface ChallengeSliderEstimation extends ChallengeQuestionBase {
+  type: 'slider-estimation';
+  unit: string;
+  correctValue: number;
+  acceptableRange: [number, number];
+  sliderMin: number;
+  sliderMax: number;
+}
+
+export type ChallengeQuestion =
+  | ChallengeMcq | ChallengeTwoStage | ChallengeAssertionReason
+  | ChallengeAgreementMatrix | ChallengeConfidenceWeighted
+  | ChallengeSliderEstimation;
+
+export interface WeeklyChallengeData {
+  metadata: { chapterTitle: string; weekNumber: number; estimatedMinutes: number };
+  questions: ChallengeQuestion[];
+}
+
 export interface ActivityDetail {
   steps: Array<{ step: number; timing: string; instruction: string; studentAction: string }>;
   facilitationTips: string[];
@@ -117,6 +200,7 @@ export interface GeneratedChapter {
   pptxUrl?: string; // blob URL
   infographicDataUri?: string; // data:image/jpeg;base64,...
   infographicPrompt?: string; // the Claude-written prompt for Gemini
+  weeklyChallengeData?: WeeklyChallengeData;
 }
 
 export interface SlideData {

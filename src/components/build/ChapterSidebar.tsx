@@ -9,11 +9,12 @@ interface ChapterSidebarProps {
   batchCurrentChapter: number | null;
 }
 
-function countReady(ch: { htmlContent: string; practiceQuizData?: string; inClassQuizData?: unknown[]; discussionData?: unknown[]; activityData?: unknown[]; audioTranscript?: string; slidesJson?: unknown[]; infographicDataUri?: string }, hasGemini: boolean): number {
+function countReady(ch: { htmlContent: string; practiceQuizData?: string; inClassQuizData?: unknown[]; weeklyChallengeData?: unknown; discussionData?: unknown[]; activityData?: unknown[]; audioTranscript?: string; slidesJson?: unknown[]; infographicDataUri?: string }, hasGemini: boolean): number {
   let count = 0;
   if (ch.htmlContent) count++;
   if (ch.practiceQuizData) count++;
   if (ch.inClassQuizData && ch.inClassQuizData.length > 0) count++;
+  if (ch.weeklyChallengeData) count++;
   if (ch.discussionData && ch.discussionData.length > 0) count++;
   if (ch.activityData && ch.activityData.length > 0) count++;
   if (ch.audioTranscript) count++;
@@ -26,7 +27,7 @@ export function ChapterSidebar({ selectedChapterNum, onSelectChapter, disabled, 
   const { syllabus, chapters, researchDossiers } = useCourseStore();
   const { geminiApiKey } = useApiStore();
   const hasGemini = !!geminiApiKey;
-  const totalOutputs = hasGemini ? 8 : 7;
+  const totalOutputs = hasGemini ? 9 : 8;
 
   if (!syllabus) return null;
 

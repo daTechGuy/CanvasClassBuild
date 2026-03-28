@@ -29,6 +29,7 @@ Describe your subject and ClassBuild produces a full course: interactive chapter
 - AI-narrated audiobook (ElevenLabs)
 - AI-generated infographic (Gemini)
 - Teaching pack: discussion starters, activities, and current events hooks
+- Weekly mastery challenge with 6 question types and SCORM 2004 for Blackboard
 - Research dossier with sources and synthesis notes
 
 ## How do I install ClassBuild?

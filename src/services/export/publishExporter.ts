@@ -20,8 +20,17 @@ export async function assemblePublishHtml(
     // Quiz template unavailable
   }
 
+  let buildChallengeHtml: ((title: string, data: import('../../types/course').WeeklyChallengeData, course: string, theme?: string) => string) | null = null;
+  try {
+    const mod = await import('../../templates/weeklyChallengeTemplate');
+    buildChallengeHtml = mod.buildWeeklyChallengeHtml;
+  } catch {
+    // Weekly challenge template unavailable
+  }
+
   const chaptersWithQuizHtml = chapters.map((ch) => {
     let quizHtml: string | undefined;
+    let challengeHtml: string | undefined;
     if (ch.practiceQuizData && buildQuizHtml) {
       try {
         quizHtml = buildQuizHtml(
@@ -34,7 +43,19 @@ export async function assemblePublishHtml(
         // Quiz build failed
       }
     }
-    return { ...ch, quizHtml };
+    if (ch.weeklyChallengeData && buildChallengeHtml) {
+      try {
+        challengeHtml = buildChallengeHtml(
+          `Week ${ch.number} Challenge — ${ch.title}`,
+          ch.weeklyChallengeData,
+          syllabus.courseTitle,
+          themeId,
+        );
+      } catch {
+        // Challenge build failed
+      }
+    }
+    return { ...ch, quizHtml, challengeHtml };
   });
 
   return buildCourseViewerHtml(syllabus, chaptersWithQuizHtml, themeId);

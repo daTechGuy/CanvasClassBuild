@@ -39,6 +39,7 @@ The pipeline has five stages, each with dedicated prompt builders in `src/prompt
    - **Activities** (`src/prompts/activities.ts`) — Facilitated activities with step-by-step guides
    - **Audio transcript** (`src/prompts/audioTranscript.ts`) — Narration script sent to ElevenLabs TTS
    - **Slides** (`src/prompts/slides.ts`) — JSON slide data rendered to PPTX via pptxgenjs
+   - **Weekly challenge** (`src/prompts/weeklyChallenge.ts`) — Mastery-gated assessment with 6 question types, parameterised variants, SCORM 2004 wrapper for Blackboard
    - **Infographic** (`src/prompts/infographic.ts`) — Claude writes a prompt, Gemini generates the image
 5. **Export/Publish** (`scripts/lib/publish.ts`) — Assembles a static course viewer site from all generated materials, or exports as ZIP/PPTX.
 

@@ -92,6 +92,39 @@ export function ExportPage() {
     }
   }, [chapters, syllabus]);
 
+  const handleDownloadWeeklyChallenge = useCallback(async (chapterNum: number) => {
+    const chapter = chapters.find(c => c.number === chapterNum);
+    if (!chapter?.weeklyChallengeData || !syllabus) return;
+    try {
+      const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
+      const html = buildWeeklyChallengeHtml(`Week ${chapterNum} Challenge — ${chapter.title}`, chapter.weeklyChallengeData, syllabus.courseTitle, setup.themeId);
+      downloadFile(html, `weekly-challenge-${chapterNum}-${sanitizeFilename(chapter.title)}.html`);
+    } catch {
+      downloadFile(JSON.stringify(chapter.weeklyChallengeData, null, 2), `weekly-challenge-${chapterNum}-${sanitizeFilename(chapter.title)}.json`, 'application/json');
+    }
+  }, [chapters, syllabus, setup.themeId]);
+
+  const handleDownloadWeeklyChallengeSCORM = useCallback(async (chapterNum: number) => {
+    const chapter = chapters.find(c => c.number === chapterNum);
+    if (!chapter?.weeklyChallengeData || !syllabus) return;
+    try {
+      const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
+      const { default: JSZip } = await import('jszip');
+      const html = buildWeeklyChallengeHtml(`Week ${chapterNum} Challenge — ${chapter.title}`, chapter.weeklyChallengeData, syllabus.courseTitle, setup.themeId);
+      const launchFile = `weekly-challenge-${chapterNum}.html`;
+      const title = `Week ${chapterNum} Challenge — ${chapter.title}`;
+      const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const manifest = `<?xml version="1.0" encoding="UTF-8"?>\n<manifest identifier="classbuild-scorm-pkg" version="1.0" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_v1p3" xmlns:adlseq="http://www.adlnet.org/xsd/adlseq_v1p3" xmlns:adlnav="http://www.adlnet.org/xsd/adlnav_v1p3" xmlns:imsss="http://www.imsglobal.org/xsd/imsss" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imscp_v1p1 imscp_v1p1.xsd http://www.adlnet.org/xsd/adlcp_v1p3 adlcp_v1p3.xsd http://www.adlnet.org/xsd/adlseq_v1p3 adlseq_v1p3.xsd http://www.adlnet.org/xsd/adlnav_v1p3 adlnav_v1p3.xsd http://www.imsglobal.org/xsd/imsss imsss_v1p0.xsd"><metadata><schema>ADL SCORM</schema><schemaversion>2004 4th Edition</schemaversion></metadata><organizations default="org-1"><organization identifier="org-1"><title>${escXml(title)}</title><item identifier="item-1" identifierref="res-1"><title>${escXml(title)}</title></item></organization></organizations><resources><resource identifier="res-1" type="webcontent" adlcp:scormType="sco" href="${escXml(launchFile)}"><file href="${escXml(launchFile)}" /></resource></resources></manifest>`;
+      const zip = new JSZip();
+      zip.file('imsmanifest.xml', manifest);
+      zip.file(launchFile, html);
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+      downloadFile(blob, `weekly-challenge-${chapterNum}-${sanitizeFilename(chapter.title)}-scorm.zip`, 'application/zip');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'SCORM export failed');
+    }
+  }, [chapters, syllabus, setup.themeId, setError]);
+
   const handleDownloadAudio = useCallback((chapterNum: number) => {
     const chapter = chapters.find(c => c.number === chapterNum);
     if (!chapter?.audioUrl) return;
@@ -420,6 +453,16 @@ export function ExportPage() {
         }
       }
 
+      if (chapter.weeklyChallengeData && syllabus) {
+        try {
+          const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
+          const challengeHtml = buildWeeklyChallengeHtml(`Week ${chapter.number} Challenge — ${chapter.title}`, chapter.weeklyChallengeData, syllabus.courseTitle, setup.themeId);
+          courseFolder?.file(`weekly-challenge-${chapter.number}-${chapterName}.html`, challengeHtml);
+        } catch {
+          courseFolder?.file(`weekly-challenge-${chapter.number}-${chapterName}.json`, JSON.stringify(chapter.weeklyChallengeData, null, 2));
+        }
+      }
+
       if (chapter.slidesJson && syllabus) {
         try {
           const { generatePptx } = await import('../services/export/pptxExporter');
@@ -481,13 +524,14 @@ export function ExportPage() {
   const allReady = readyCount === totalChapters;
 
   // Count downloadable files per chapter and totals
-  const FILES_PER_CHAPTER = 7; // HTML, practice quiz, in-class quiz, slides, audio, teaching resources, infographic
+  const FILES_PER_CHAPTER = 8; // HTML, practice quiz, in-class quiz, weekly challenge, slides, audio, teaching resources, infographic
   const totalPossibleFiles = totalChapters * FILES_PER_CHAPTER;
 
   function countFiles(c: typeof chapters[number]): number {
     let n = 1; // chapter HTML always
     if (c.practiceQuizData) n++;
     if (c.inClassQuizData && c.inClassQuizData.length > 0) n++;
+    if (c.weeklyChallengeData) n++;
     if (c.slidesJson) n++;
     if (c.audioUrl) n++;
     if ((c.discussionData && c.discussionData.length > 0) || (c.activityData && c.activityData.length > 0)) n++;
@@ -651,6 +695,7 @@ export function ExportPage() {
           // --- Generated chapter card ---
           const hasQuiz = !!generated.practiceQuizData;
           const hasInClassQuiz = !!generated.inClassQuizData && generated.inClassQuizData.length > 0;
+          const hasWeeklyChallenge = !!generated.weeklyChallengeData;
           const hasSlides = !!generated.slidesJson;
           const hasAudio = !!generated.audioUrl;
           const hasTeachingResources = (generated.discussionData && generated.discussionData.length > 0) || (generated.activityData && generated.activityData.length > 0);
@@ -695,6 +740,20 @@ export function ExportPage() {
                     label="In-Class Quiz (.zip)"
                     icon={<DocIcon />}
                     onClick={() => handleDownloadInClassQuiz(ch.number)}
+                  />
+                )}
+                {hasWeeklyChallenge && (
+                  <DownloadRow
+                    label="Weekly Challenge (.html)"
+                    icon={<QuizIcon />}
+                    onClick={() => handleDownloadWeeklyChallenge(ch.number)}
+                  />
+                )}
+                {hasWeeklyChallenge && (
+                  <DownloadRow
+                    label="Weekly Challenge SCORM (.zip)"
+                    icon={<DocIcon />}
+                    onClick={() => handleDownloadWeeklyChallengeSCORM(ch.number)}
                   />
                 )}
                 {hasSlides && (

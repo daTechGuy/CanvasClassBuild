@@ -36,9 +36,11 @@ import { buildActivitiesPrompt, buildActivitiesUserPrompt } from '../src/prompts
 import { buildAudioTranscriptPrompt, buildAudioTranscriptUserPrompt } from '../src/prompts/audioTranscript';
 import { buildSlidesPrompt, buildSlidesUserPrompt } from '../src/prompts/slides';
 import { buildInfographicMetaPrompt, buildInfographicMetaUserPrompt } from '../src/prompts/infographic';
+import { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } from '../src/prompts/weeklyChallenge';
 import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt, parseResearchResponse } from '../src/prompts/research';
 import { balancePracticeQuiz, balanceInClassQuiz } from '../src/services/quiz/answerBalancer';
 import { buildQuizHtml } from '../src/templates/quizTemplate';
+import { buildWeeklyChallengeHtml } from '../src/templates/weeklyChallengeTemplate';
 import { generateQuizDocPackage } from '../src/services/export/quizDocExporter';
 import { generatePptx } from '../src/services/export/pptxExporter';
 import { validateDois } from '../src/utils/doiValidator';
@@ -54,6 +56,7 @@ import type {
   SlideData,
   EducationLevel,
   ChapterLength,
+  WeeklyChallengeData,
 } from '../src/types/course';
 
 const execFileAsync = promisify(execFile);
@@ -442,6 +445,54 @@ async function generateInClassQuiz(
   }
 }
 
+async function generateWeeklyChallenge(
+  ch: ChapterSyllabus,
+  chapterHtml: string,
+  syllabus: Syllabus,
+  prefix: string,
+) {
+  log(`  Ch ${prefix} Weekly challenge...`);
+  const priorChapters = (ch.spacingConnections || [])
+    .map(n => syllabus.chapters.find(c => c.number === n))
+    .filter((c): c is ChapterSyllabus => !!c)
+    .map(c => ({ number: c.number, title: c.title, keyConcepts: c.keyConcepts }));
+
+  const challengeText = await streamWithRetry(
+    {
+      apiKey: ANTHROPIC_API_KEY!,
+      model: MODELS.opus,
+      system: buildWeeklyChallengePrompt(),
+      messages: [{
+        role: 'user',
+        content: buildWeeklyChallengeUserPrompt(
+          ch.title, ch.narrative, ch.keyConcepts,
+          chapterHtml.slice(0, 3000), ch.number, priorChapters,
+        ),
+      }],
+      thinkingBudget: 'high',
+      maxTokens: 10000,
+    },
+    { onThinking: () => process.stdout.write('.'), onText: () => process.stdout.write('+') },
+  );
+  console.log('');
+
+  const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
+  await save(join(OUTPUT_DIR, 'challenges', `${prefix}_weekly_challenge.json`), JSON.stringify(parsed, null, 2));
+
+  try {
+    const challengeHtml = buildWeeklyChallengeHtml(
+      `Week ${ch.number} Challenge — ${ch.title}`,
+      parsed,
+      syllabus.courseTitle,
+      setup.themeId,
+    );
+    await save(join(OUTPUT_DIR, 'challenges', `${prefix}_weekly_challenge.html`), challengeHtml);
+    log(`    Ch ${prefix} Saved weekly challenge (JSON + HTML)`);
+  } catch {
+    log(`    Ch ${prefix} Warning: Challenge HTML build failed, JSON saved`);
+  }
+}
+
 async function generateDiscussion(
   ch: ChapterSyllabus,
   syllabus: Syllabus,
@@ -650,6 +701,7 @@ async function generateChapterMaterials(
   const opusTasks: Task<void>[] = [
     { label: `Ch${prefix}-practice-quiz`, fn: () => generatePracticeQuiz(ch, chapterHtml, syllabus, prefix) },
     { label: `Ch${prefix}-inclass-quiz`, fn: () => generateInClassQuiz(ch, chapterHtml, syllabus, prefix) },
+    { label: `Ch${prefix}-weekly-challenge`, fn: () => generateWeeklyChallenge(ch, chapterHtml, syllabus, prefix) },
   ];
 
   // Parallel batch 2: Sonnet/Gemini tasks

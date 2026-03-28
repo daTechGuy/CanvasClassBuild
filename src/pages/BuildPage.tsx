@@ -16,7 +16,7 @@ import { buildSlidesPrompt, buildSlidesUserPrompt } from '../prompts/slides';
 import { Button } from '../components/shared/Button';
 import { ChapterSidebar } from '../components/build/ChapterSidebar';
 import { ResearchPanel } from '../components/build/ResearchPanel';
-import type { SlideData, InClassQuizQuestion, ActivityDetail } from '../types/course';
+import type { SlideData, InClassQuizQuestion, ActivityDetail, WeeklyChallengeData } from '../types/course';
 
 interface DiscussionPrompt {
   prompt: string;
@@ -131,6 +131,8 @@ export function BuildPage() {
   const [copiedLabel, setCopiedLabel] = useState('');
   const [infographicDataUri, setInfographicDataUri] = useState('');
   const [generatingInfographic, setGeneratingInfographic] = useState<number | null>(null);
+  const [weeklyChallengeHtml, setWeeklyChallengeHtml] = useState('');
+  const [generatingWeeklyChallenge, setGeneratingWeeklyChallenge] = useState<number | null>(null);
   const [tabErrors, setTabErrors] = useState<Record<string, string>>({});
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const autoGenStarted = useRef(false);
@@ -143,7 +145,7 @@ export function BuildPage() {
   // Derived state
   const currentChapter = chapters.find(c => c.number === selectedChapterNum);
   const syllabusChapter = syllabus?.chapters.find(c => c.number === selectedChapterNum);
-  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingInfographic);
+  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingInfographic || generatingWeeklyChallenge);
   const anyBusy = isGenerating || anyLocalGenerating || batchGenerating;
 
   const tabGenerating: Record<string, boolean> = {
@@ -154,6 +156,7 @@ export function BuildPage() {
     audio: generatingAudio === selectedChapterNum,
     slides: generatingSlides === selectedChapterNum,
     infographic: generatingInfographic === selectedChapterNum,
+    weeklychallenge: generatingWeeklyChallenge === selectedChapterNum,
   };
 
   const setTabError = useCallback((tab: string, msg: string) => {
@@ -245,6 +248,7 @@ export function BuildPage() {
     setAudioUrl('');
     setSlidesData([]);
     setInfographicDataUri('');
+    setWeeklyChallengeHtml('');
     setThinkingText('');
     setRefineFeedback('');
     setShowRefineConfirm(false);
@@ -279,6 +283,23 @@ export function BuildPage() {
             setQuizHtml(html);
           } catch {
             // Quiz template failed to load
+          }
+        })();
+      }
+      if (ch.weeklyChallengeData && syllabus) {
+        const syllCh = syllabus.chapters.find(sc => sc.number === selectedChapterNum);
+        (async () => {
+          try {
+            const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
+            const html = buildWeeklyChallengeHtml(
+              `Week ${selectedChapterNum} Challenge — ${syllCh?.title || ch.title}`,
+              ch.weeklyChallengeData!,
+              syllabus.courseTitle,
+              setup.themeId,
+            );
+            setWeeklyChallengeHtml(html);
+          } catch {
+            // Weekly challenge template failed to load
           }
         })();
       }
@@ -536,6 +557,70 @@ export function BuildPage() {
       setGeneratingInClassQuiz(null);
     }
   }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, updateChapter, setTabError, clearTabError]);
+
+  const generateWeeklyChallengeContent = useCallback(async () => {
+    if (!syllabus || !currentChapter || !syllabusChapter) return;
+    const capturedChapter = selectedChapterNum;
+    setGeneratingWeeklyChallenge(capturedChapter);
+    clearTabError('weeklychallenge');
+
+    try {
+      const priorChapters = (syllabusChapter.spacingConnections || [])
+        .map(n => syllabus.chapters.find(c => c.number === n))
+        .filter((c): c is NonNullable<typeof c> => !!c)
+        .map(c => ({ number: c.number, title: c.title, keyConcepts: c.keyConcepts }));
+
+      const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
+
+      const fullText = await streamWithRetry(
+        {
+          apiKey: claudeApiKey,
+          model: MODELS.opus,
+          system: buildWeeklyChallengePrompt(),
+          messages: [{
+            role: 'user',
+            content: buildWeeklyChallengeUserPrompt(
+              syllabusChapter.title,
+              syllabusChapter.narrative,
+              syllabusChapter.keyConcepts,
+              currentChapter.htmlContent?.slice(0, 3000),
+              syllabusChapter.number,
+              priorChapters,
+            ),
+          }],
+          thinkingBudget: 'high',
+          maxTokens: 10000,
+        },
+        {}
+      );
+
+      try {
+        const parsed = parseJson(fullText, '{') as WeeklyChallengeData;
+        updateChapter(capturedChapter, { weeklyChallengeData: parsed });
+
+        if (selectedChapterRef.current === capturedChapter) {
+          try {
+            const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
+            const html = buildWeeklyChallengeHtml(
+              `Week ${capturedChapter} Challenge — ${syllabusChapter.title}`,
+              parsed,
+              syllabus.courseTitle,
+              setup.themeId,
+            );
+            setWeeklyChallengeHtml(html);
+          } catch {
+            // Template failed
+          }
+        }
+      } catch {
+        setTabError('weeklychallenge', 'Failed to parse weekly challenge data');
+      }
+    } catch (err) {
+      setTabError('weeklychallenge', err instanceof Error ? err.message : 'Weekly challenge generation failed');
+    } finally {
+      setGeneratingWeeklyChallenge(null);
+    }
+  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, setup.themeId, updateChapter, setTabError, clearTabError]);
 
   const generateDiscussion = useCallback(async () => {
     if (!syllabus || !syllabusChapter) return;
@@ -917,6 +1002,37 @@ export function BuildPage() {
         } catch {
           // In-class quiz generation failed, continue
         }
+
+        // Generate weekly challenge
+        try {
+          const priorChapters = (ch.spacingConnections || [])
+            .map(n => syllabus.chapters.find(sc => sc.number === n))
+            .filter((sc): sc is NonNullable<typeof sc> => !!sc)
+            .map(sc => ({ number: sc.number, title: sc.title, keyConcepts: sc.keyConcepts }));
+          const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
+          const challengeText = await streamMessage(
+            {
+              apiKey: claudeApiKey,
+              model: MODELS.opus,
+              system: buildWeeklyChallengePrompt(),
+              messages: [{
+                role: 'user',
+                content: buildWeeklyChallengeUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000), ch.number, priorChapters),
+              }],
+              thinkingBudget: 'high',
+              maxTokens: 10000,
+            },
+            { onError: (err) => setError(err.message) }
+          );
+          try {
+            const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
+            updateChapter(ch.number, { weeklyChallengeData: parsed });
+          } catch {
+            // Parse failed, continue
+          }
+        } catch {
+          // Weekly challenge generation failed, continue
+        }
       } catch (err) {
         setError(`Failed to generate Class ${ch.number}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1050,6 +1166,43 @@ export function BuildPage() {
           }
         } catch {
           // In-class quiz failed, continue
+        }
+      }
+
+      // 1d. Weekly Challenge
+      existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+      if (!existing?.weeklyChallengeData) {
+        setBatchMaterial('Weekly Challenge');
+        setBatchPhase('thinking');
+        try {
+          const priorChapters = (ch.spacingConnections || [])
+            .map(n => syllabus.chapters.find(sc => sc.number === n))
+            .filter((sc): sc is NonNullable<typeof sc> => !!sc)
+            .map(sc => ({ number: sc.number, title: sc.title, keyConcepts: sc.keyConcepts }));
+
+          const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
+          const challengeText = await streamMessage(
+            {
+              apiKey: claudeApiKey,
+              model: MODELS.opus,
+              system: buildWeeklyChallengePrompt(),
+              messages: [{
+                role: 'user',
+                content: buildWeeklyChallengeUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000), ch.number, priorChapters),
+              }],
+              thinkingBudget: 'high',
+              maxTokens: 10000,
+            },
+            { onError: (err) => setError(err.message) }
+          );
+          try {
+            const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
+            updateChapter(ch.number, { weeklyChallengeData: parsed });
+          } catch {
+            // Parse failed
+          }
+        } catch {
+          // Weekly challenge generation failed, continue
         }
       }
 
@@ -1228,6 +1381,7 @@ export function BuildPage() {
     { id: 'chapter', label: 'Reading', ready: !!chapterHtml },
     { id: 'quiz', label: 'Practice Quiz', ready: !!quizHtml },
     { id: 'inclassquiz', label: 'In-Class Quiz', ready: inClassQuizData.length > 0 },
+    { id: 'weeklychallenge', label: 'Weekly Challenge', ready: !!weeklyChallengeHtml },
     { id: 'discussion', label: 'Discussion', ready: discussions.length > 0 },
     { id: 'activities', label: 'Activities', ready: activities.length > 0 },
     { id: 'audio', label: 'Audiobook', ready: !!audioTranscript },
@@ -1338,7 +1492,7 @@ export function BuildPage() {
                   >
                     <div className="text-sm font-semibold text-violet-300 mb-1">Build Everything</div>
                     <p className="text-xs text-text-muted leading-relaxed">
-                      All materials — reading, quizzes, discussion, activities, audiobook, slides{geminiApiKey ? ', infographic' : ''}.
+                      All materials — reading, quizzes, weekly challenge, discussion, activities, audiobook, slides{geminiApiKey ? ', infographic' : ''}.
                       {researched >= 6 ? ' Possibly 1-2 hours.' : researched >= 3 ? ' Possibly 30-60 min.' : ' Takes a while.'}
                     </p>
                   </button>
@@ -1666,11 +1820,12 @@ export function BuildPage() {
                                   <ul className="text-xs text-text-muted space-y-1 mb-3">
                                     {quizHtml && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Practice Quiz</li>}
                                     {inClassQuizData.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />In-Class Quiz</li>}
+                                    {weeklyChallengeHtml && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Weekly Challenge</li>}
                                     {discussions.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Discussion Prompts</li>}
                                     {activities.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Activities</li>}
                                     {audioTranscript && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Audiobook</li>}
                                     {slidesData.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Slides</li>}
-                                    {!quizHtml && inClassQuizData.length === 0 && discussions.length === 0 && activities.length === 0 && !audioTranscript && slidesData.length === 0 && (
+                                    {!quizHtml && inClassQuizData.length === 0 && !weeklyChallengeHtml && discussions.length === 0 && activities.length === 0 && !audioTranscript && slidesData.length === 0 && (
                                       <li className="text-text-muted italic">No dependent content to clear</li>
                                     )}
                                   </ul>
@@ -1872,6 +2027,71 @@ export function BuildPage() {
                             <p className="text-text-muted text-xs mb-4">10 questions exported as 5 shuffled Word doc versions (A-E) + answer key</p>
                             <Button onClick={generateInClassQuiz} disabled={!currentChapter || !!generatingInClassQuiz}>
                               Generate In-Class Quiz
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {activeTab === 'weeklychallenge' && (
+                  <motion.div
+                    key="weeklychallenge"
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    {weeklyChallengeHtml ? (
+                      <div className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
+                          <p className="text-xs text-text-muted">Mastery challenge with mixed question types &amp; SCORM 2004</p>
+                          <Button
+                            size="sm"
+                            onClick={() => downloadFile(weeklyChallengeHtml, `weekly-challenge-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.html`)}
+                          >
+                            <svg className="mr-1.5 w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <polyline points="7 10 12 15 17 10" />
+                              <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            Download .html
+                          </Button>
+                        </div>
+                        <iframe
+                          srcDoc={weeklyChallengeHtml}
+                          className="w-full border-0"
+                          style={{ height: '80vh' }}
+                          title="Weekly Challenge Preview"
+                          sandbox="allow-scripts allow-same-origin"
+                        />
+                      </div>
+                    ) : (
+                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
+                        {generatingWeeklyChallenge ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <div className="flex gap-1">
+                              {[0, 1, 2].map(i => (
+                                <motion.div
+                                  key={i}
+                                  className="w-2 h-2 rounded-full bg-violet-500"
+                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
+                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-text-secondary text-sm">Generating weekly challenge with extended thinking...</span>
+                            <p className="text-xs text-text-muted mt-1">Mixed question types: MCQ, two-stage, assertion-reason, matrix, slider, boss.</p>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center text-xl">
+                              &#x1F525;
+                            </div>
+                            <p className="text-text-secondary mb-1">Weekly Mastery Challenge</p>
+                            <p className="text-text-muted text-xs mb-4">10-12 questions, 6 assessment types, 85% mastery threshold, SCORM 2004</p>
+                            <Button onClick={generateWeeklyChallengeContent} disabled={!currentChapter || !!generatingWeeklyChallenge}>
+                              Generate Weekly Challenge
                             </Button>
                           </>
                         )}

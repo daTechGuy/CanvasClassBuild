@@ -29,7 +29,7 @@ src/
 │   ├── courseStore.ts                # Course state (persisted, Zustand)
 │   ├── apiStore.ts                  # API keys (persisted)
 │   └── uiStore.ts                   # Batch generation UI state
-├── prompts/                          # 11 prompt builders (see below)
+├── prompts/                          # 12 prompt builders (see below)
 │   ├── syllabus.ts
 │   ├── chapter.ts
 │   ├── research.ts
@@ -40,7 +40,8 @@ src/
 │   ├── discussion.ts
 │   ├── audioTranscript.ts
 │   ├── learningObjectives.ts
-│   └── infographic.ts
+│   ├── infographic.ts
+│   └── weeklyChallenge.ts
 ├── services/
 │   ├── claude/
 │   │   ├── client.ts                # Anthropic SDK wrapper, model IDs, thinking budgets
@@ -56,6 +57,7 @@ src/
 │       └── publishExporter.ts      # Course viewer assembly (dynamic import)
 ├── templates/
 │   ├── quizTemplate.ts             # Gamified quiz HTML (~2400 lines, dynamic import)
+│   ├── weeklyChallengeTemplate.ts  # Weekly mastery challenge HTML (dynamic import)
 │   └── courseViewerTemplate.ts     # Standalone course viewer
 ├── pages/
 │   ├── LandingPage.tsx             # Landing with example courses
@@ -76,6 +78,7 @@ scripts/
 ├── generate-course.ts              # Main CLI entry point
 ├── gen-audio.ts                    # Audio-only CLI
 ├── publish-course.ts               # Publish utility
+├── package-scorm.ts                # SCORM 2004 ZIP packager for Blackboard
 └── lib/                            # CLI-specific helpers
 public/                             # Static assets (hero, previews, course thumbnails)
 ```
@@ -87,7 +90,7 @@ public/                             # Static assets (hero, previews, course thum
 - Web search uses server tool type: `{ type: 'web_search_20250305', name: 'web_search' }`, NOT a custom tool_use block.
 - Stream events: `server_tool_use` for search queries, `web_search_tool_result` for results.
 - Template literal escaping: `\${x}` prevents interpolation. For nested templates, `` \` `` produces a literal backtick.
-- All code-split chunks use dynamic `import()`: tts.ts, pptxExporter.ts, quizTemplate.ts, imageGen.ts, imagePlacer.ts, infographic.ts, publishExporter.ts.
+- All code-split chunks use dynamic `import()`: tts.ts, pptxExporter.ts, quizTemplate.ts, weeklyChallengeTemplate.ts, imageGen.ts, imagePlacer.ts, infographic.ts, publishExporter.ts.
 - Themes propagate to all outputs via `buildThemePromptBlock(theme)` which injects CSS variables into prompts.
 - 3 Zustand stores: courseStore (persisted, version 1 with stage migration), apiStore (persisted), uiStore (transient).
 - Anthropic SDK version 0.74.0, used with `dangerouslyAllowBrowser: true` for BYOK.

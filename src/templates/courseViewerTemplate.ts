@@ -3,6 +3,7 @@ import { getTheme } from '../themes';
 
 interface ChapterWithQuiz extends GeneratedChapter {
   quizHtml?: string;
+  challengeHtml?: string;
 }
 
 function escapeHtml(str: string): string {
@@ -43,6 +44,9 @@ export function buildCourseViewerHtml(
     if (ch.discussionData && ch.discussionData.length > 0) {
       subTabs.push('<button class="sub-tab" data-subtab="discussion" onclick="showSubTab(this, \'discussion\')">Discussion</button>');
     }
+    if (ch.challengeHtml) {
+      subTabs.push('<button class="sub-tab" data-subtab="challenge" onclick="showSubTab(this, \'challenge\')">Weekly Challenge</button>');
+    }
     if (ch.infographicDataUri) {
       subTabs.push('<button class="sub-tab" data-subtab="infographic" onclick="showSubTab(this, \'infographic\')">Infographic</button>');
     }
@@ -58,6 +62,14 @@ export function buildCourseViewerHtml(
       sections.push(`
         <div class="sub-content" data-subcontent="quiz">
           <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(ch.quizHtml)}" sandbox="allow-scripts allow-same-origin"></iframe>
+        </div>`);
+    }
+
+    // Weekly challenge iframe
+    if (ch.challengeHtml) {
+      sections.push(`
+        <div class="sub-content" data-subcontent="challenge">
+          <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(ch.challengeHtml)}" sandbox="allow-scripts allow-same-origin"></iframe>
         </div>`);
     }
 

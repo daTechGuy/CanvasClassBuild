@@ -356,6 +356,7 @@ const deliverables: { label: string; detail: string; icon: ReactNode }[] = [
   { label: 'Slides', detail: 'PowerPoint with speaker notes', icon: <SlidesIcon /> },
   { label: 'Audiobook', detail: 'AI-narrated with pro voices', icon: <AudioIcon /> },
   { label: 'Teaching Pack', detail: 'Discussions, activities, starters', icon: <ResourcesIcon /> },
+  { label: 'Weekly Challenge', detail: 'Mastery-gated with SCORM for Blackboard', icon: <QuizCheckIcon /> },
 ];
 
 // --- Pipeline stages ---
