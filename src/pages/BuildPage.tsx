@@ -2063,7 +2063,7 @@ export function BuildPage() {
                           className="w-full border-0"
                           style={{ height: '80vh' }}
                           title="Weekly Challenge Preview"
-                          sandbox="allow-scripts allow-same-origin"
+                          sandbox="allow-scripts"
                         />
                       </div>
                     ) : (

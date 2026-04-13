@@ -78,7 +78,7 @@ export function buildCourseViewerHtml(
     if (ch.challengeHtml) {
       sections.push(`
         <div class="sub-content" data-subcontent="challenge">
-          <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(ch.challengeHtml)}" sandbox="allow-scripts allow-same-origin"></iframe>
+          <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(withResizeShim(ch.challengeHtml))}" sandbox="allow-scripts"></iframe>
         </div>`);
     }
 
