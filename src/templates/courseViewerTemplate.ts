@@ -15,6 +15,15 @@ function escapeSrcdoc(html: string): string {
   return html.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+// Injected into every sandboxed iframe payload so the parent can size it via
+// postMessage. Required because the iframes drop `allow-same-origin`, which
+// means the parent can no longer touch `contentDocument` directly.
+const RESIZE_SHIM = '<script>(function(){function p(){try{parent.postMessage({__cbResize:1,h:document.documentElement.scrollHeight},"*")}catch(e){}}window.addEventListener("load",p);if(window.ResizeObserver){try{new ResizeObserver(p).observe(document.documentElement)}catch(e){}}})();</script>';
+
+function withResizeShim(html: string): string {
+  return html + RESIZE_SHIM;
+}
+
 /**
  * Builds a complete, self-contained HTML course viewer.
  * Renders each class reading in an iframe (srcdoc) for CSS/JS isolation.
@@ -54,14 +63,14 @@ export function buildCourseViewerHtml(
     // Reading iframe
     sections.push(`
         <div class="sub-content active" data-subcontent="reading">
-          <iframe class="reading-frame" srcdoc="${escapeSrcdoc(ch.htmlContent)}" sandbox="allow-scripts allow-same-origin"></iframe>
+          <iframe class="reading-frame" srcdoc="${escapeSrcdoc(withResizeShim(ch.htmlContent))}" sandbox="allow-scripts"></iframe>
         </div>`);
 
     // Practice quiz iframe
     if (ch.quizHtml) {
       sections.push(`
         <div class="sub-content" data-subcontent="quiz">
-          <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(ch.quizHtml)}" sandbox="allow-scripts allow-same-origin"></iframe>
+          <iframe class="quiz-frame" srcdoc="${escapeSrcdoc(withResizeShim(ch.quizHtml))}" sandbox="allow-scripts"></iframe>
         </div>`);
     }
 
@@ -427,6 +436,19 @@ export function buildCourseViewerHtml(
   </main>
 
   <script>
+    // Sandboxed iframes post their scrollHeight here; the parent has no
+    // same-origin access into them and must rely on this message channel.
+    window.addEventListener('message', function(e) {
+      if (!e || !e.data || !e.data.__cbResize) return;
+      var iframes = document.querySelectorAll('iframe');
+      for (var i = 0; i < iframes.length; i++) {
+        if (iframes[i].contentWindow === e.source) {
+          iframes[i].style.height = Math.max(e.data.h, 400) + 'px';
+          return;
+        }
+      }
+    });
+
     function showChapter(num) {
       // Hide welcome
       var welcome = document.getElementById('welcome');
@@ -442,23 +464,6 @@ export function buildCourseViewerHtml(
       // Update nav active state
       document.querySelectorAll('.nav-item').forEach(function(el) {
         el.classList.toggle('active', el.getAttribute('data-chapter') == num);
-      });
-
-      // Auto-resize iframes in this chapter
-      target && target.querySelectorAll('iframe').forEach(function(frame) {
-        frame.onload = function() {
-          try {
-            var h = frame.contentDocument.documentElement.scrollHeight;
-            frame.style.height = Math.max(h, 400) + 'px';
-          } catch(e) {}
-        };
-        // Trigger load if already loaded
-        if (frame.contentDocument && frame.contentDocument.readyState === 'complete') {
-          try {
-            var h = frame.contentDocument.documentElement.scrollHeight;
-            frame.style.height = Math.max(h, 400) + 'px';
-          } catch(e) {}
-        }
       });
 
       // Close mobile menu
@@ -481,16 +486,7 @@ export function buildCourseViewerHtml(
       panel.querySelectorAll('.sub-content').forEach(function(c) { c.classList.remove('active'); });
       btn.classList.add('active');
       var target = panel.querySelector('.sub-content[data-subcontent="' + tabName + '"]');
-      if (target) {
-        target.classList.add('active');
-        // Resize iframes when tab becomes visible
-        target.querySelectorAll('iframe').forEach(function(frame) {
-          try {
-            var h = frame.contentDocument.documentElement.scrollHeight;
-            frame.style.height = Math.max(h, 400) + 'px';
-          } catch(e) {}
-        });
-      }
+      if (target) target.classList.add('active');
     }
 
     // Auto-show first chapter if only one

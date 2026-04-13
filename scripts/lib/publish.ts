@@ -48,6 +48,16 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
+// Injected into chapter/quiz HTML when copied into the publish package so the
+// wrapper can size their sandboxed iframes via postMessage. Required because
+// coursePackageTemplate drops `allow-same-origin` from those iframes.
+const RESIZE_SHIM = '<script>(function(){function p(){try{parent.postMessage({__cbResize:1,h:document.documentElement.scrollHeight},"*")}catch(e){}}window.addEventListener("load",p);if(window.ResizeObserver){try{new ResizeObserver(p).observe(document.documentElement)}catch(e){}}})();</script>';
+
+async function copyHtmlWithResizeShim(src: string, dest: string): Promise<void> {
+  const html = await readFile(src, 'utf-8');
+  await writeFile(dest, html + RESIZE_SHIM, 'utf-8');
+}
+
 /** Find the first file in a directory matching a prefix pattern. */
 async function findFile(dir: string, prefix: string, ext: string): Promise<string | null> {
   try {
@@ -122,7 +132,7 @@ export async function assemblePublishPackage(
     const chapterSrc = await findFile(join(outputDir, 'chapters'), prefix, '.html');
     if (chapterSrc) {
       const destName = `${prefix}.html`;
-      await copyFile(chapterSrc, join(publishDir, 'chapters', destName));
+      await copyHtmlWithResizeShim(chapterSrc, join(publishDir, 'chapters', destName));
       chapterHtmlPath = `chapters/${destName}`;
     }
 
@@ -131,7 +141,7 @@ export async function assemblePublishPackage(
     const quizSrc = await findFile(join(outputDir, 'quizzes'), `${prefix}_practice`, '.html');
     if (quizSrc) {
       const destName = `${prefix}.html`;
-      await copyFile(quizSrc, join(publishDir, 'quizzes', destName));
+      await copyHtmlWithResizeShim(quizSrc, join(publishDir, 'quizzes', destName));
       quizHtmlPath = `quizzes/${destName}`;
     }
 

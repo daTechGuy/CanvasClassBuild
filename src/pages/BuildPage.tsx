@@ -1783,7 +1783,7 @@ export function BuildPage() {
                           className="w-full border-0"
                           style={{ height: '80vh' }}
                           title={`Class ${selectedChapterNum} Reading`}
-                          sandbox="allow-scripts allow-same-origin"
+                          sandbox="allow-scripts"
                         />
                         {/* Refine chapter section */}
                         {!isGenerating && (
@@ -1875,7 +1875,7 @@ export function BuildPage() {
                           className="w-full border-0"
                           style={{ height: '80vh' }}
                           title="Practice Quiz Preview"
-                          sandbox="allow-scripts allow-same-origin"
+                          sandbox="allow-scripts"
                         />
                       </div>
                     ) : (

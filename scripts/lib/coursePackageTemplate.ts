@@ -908,13 +908,13 @@ export function buildCoursePackageHtml(
         // Reading
         if (ch.chapterHtmlPath) {
           contents += '<div class="tab-content' + (tabs[0] && tabs[0].id === 'reading' ? ' active' : '') + '" data-tab-content="reading">' +
-            '<iframe class="content-frame" src="' + ch.chapterHtmlPath + '" sandbox="allow-scripts allow-same-origin" onload="autoResize(this)"></iframe></div>';
+            '<iframe class="content-frame" src="' + ch.chapterHtmlPath + '" sandbox="allow-scripts"></iframe></div>';
         }
 
         // Practice Quiz
         if (ch.quizHtmlPath) {
           contents += '<div class="tab-content' + (tabs[0] && tabs[0].id === 'quiz' ? ' active' : '') + '" data-tab-content="quiz">' +
-            '<iframe class="content-frame" src="' + ch.quizHtmlPath + '" sandbox="allow-scripts allow-same-origin" onload="autoResize(this)"></iframe></div>';
+            '<iframe class="content-frame" src="' + ch.quizHtmlPath + '" sandbox="allow-scripts"></iframe></div>';
         }
 
         // Discussion
@@ -1046,10 +1046,7 @@ export function buildCoursePackageHtml(
         panel.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
         btn.classList.add('active');
         var target = panel.querySelector('[data-tab-content="' + tabId + '"]');
-        if (target) {
-          target.classList.add('active');
-          target.querySelectorAll('iframe').forEach(function(f) { autoResize(f); });
-        }
+        if (target) target.classList.add('active');
       };
 
       // Show chapter
@@ -1068,13 +1065,18 @@ export function buildCoursePackageHtml(
         window.scrollTo({ top: 0 });
       };
 
-      // Iframe auto-resize
-      window.autoResize = function(frame) {
-        try {
-          var h = frame.contentDocument.documentElement.scrollHeight;
-          frame.style.height = Math.max(h + 20, 400) + 'px';
-        } catch(e) {}
-      };
+      // Sandboxed iframes (no allow-same-origin) cannot expose contentDocument,
+      // so they post their scrollHeight to us via the shim injected in publish.ts.
+      window.addEventListener('message', function(e) {
+        if (!e || !e.data || !e.data.__cbResize) return;
+        var iframes = document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+          if (iframes[i].contentWindow === e.source) {
+            iframes[i].style.height = Math.max(e.data.h + 20, 400) + 'px';
+            return;
+          }
+        }
+      });
 
       // Hash-based deep linking
       function checkHash() {
