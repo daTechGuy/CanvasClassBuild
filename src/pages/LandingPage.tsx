@@ -427,18 +427,17 @@ export function LandingPage() {
                 You have a course in progress{setup.topic ? ` on "${setup.topic}"` : ''}. Starting fresh will replace it with a new one — your current syllabus, research, and generated classes won't carry over.
               </p>
               <div className="flex gap-3 justify-end">
-                <button
+                <Button
+                  size="sm"
+                  variant="ghost"
                   onClick={confirmStartFresh}
-                  className="px-4 py-2 rounded-lg bg-bg-elevated text-text-secondary text-sm font-medium hover:bg-error/10 hover:text-error transition cursor-pointer border-0"
+                  className="hover:!bg-error/10 hover:!text-error"
                 >
                   Start Fresh
-                </button>
-                <button
-                  onClick={continueCurrent}
-                  className="px-4 py-2 rounded-lg bg-violet-500 text-white text-sm font-medium hover:bg-violet-600 transition cursor-pointer border-0"
-                >
+                </Button>
+                <Button size="sm" onClick={continueCurrent}>
                   Continue Course
-                </button>
+                </Button>
               </div>
             </motion.div>
           </motion.div>
