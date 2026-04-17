@@ -43,6 +43,13 @@ function downloadFile(content: string | Blob, filename: string, type = 'text/htm
   URL.revokeObjectURL(url);
 }
 
+function formatElapsed(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s}s`;
+}
+
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 }
@@ -136,9 +143,35 @@ export function BuildPage() {
   const [generatingWeeklyChallenge, setGeneratingWeeklyChallenge] = useState<number | null>(null);
   const [tabErrors, setTabErrors] = useState<Record<string, string>>({});
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const autoGenStarted = useRef(false);
   const selectedChapterRef = useRef(selectedChapterNum);
   const batchCancelRef = useRef(false);
+
+  // Tick elapsed seconds while a single-chapter generation is running so the
+  // "Thinking..." phase (~30-90s on Opus) shows observable progress.
+  useEffect(() => {
+    if (!isGenerating) {
+      setElapsedSec(0);
+      return;
+    }
+    const t0 = Date.now();
+    setElapsedSec(0);
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - t0) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [isGenerating]);
+
+  // Close the batch-confirm modal on Escape.
+  useEffect(() => {
+    if (!showBatchConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowBatchConfirm(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showBatchConfirm]);
 
   // Keep ref in sync for generation callbacks
   selectedChapterRef.current = selectedChapterNum;
@@ -1488,9 +1521,12 @@ export function BuildPage() {
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
               className="mb-4 overflow-hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="batch-confirm-title"
             >
               <div className="p-5 rounded-xl bg-amber-500/5 border border-amber-500/20">
-                <h3 className="text-sm font-semibold text-amber-400 mb-2">
+                <h3 id="batch-confirm-title" className="text-sm font-semibold text-amber-400 mb-2">
                   Generate {researched} class{researched !== 1 ? 'es' : ''} at once?
                 </h3>
                 <p className="text-sm text-text-secondary mb-3 leading-relaxed">
@@ -1756,7 +1792,7 @@ export function BuildPage() {
                                   />
                                 ))}
                               </div>
-                              <span className="text-violet-400 text-xs font-medium">Thinking...</span>
+                              <span className="text-violet-400 text-xs font-medium">Thinking... {formatElapsed(elapsedSec)}</span>
                             </div>
                             <div className="relative max-h-24 overflow-hidden">
                               <pre className="text-xs text-text-muted/50 whitespace-pre-wrap font-mono leading-relaxed">
@@ -1769,13 +1805,13 @@ export function BuildPage() {
                         {streamingText && (
                           <div className="flex items-center gap-3 mb-4">
                             <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-                            <span className="text-text-secondary text-sm">Writing Class {selectedChapterNum}... ({Math.round(streamingText.split(/\s+/).length).toLocaleString()} words so far)</span>
+                            <span className="text-text-secondary text-sm">Writing Class {selectedChapterNum}... ({Math.round(streamingText.split(/\s+/).length).toLocaleString()} words, {formatElapsed(elapsedSec)})</span>
                           </div>
                         )}
                         {!streamingText && !thinkingText && (
                           <div className="flex items-center gap-3">
                             <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-                            <span className="text-text-secondary text-sm">Generating Class {selectedChapterNum}...</span>
+                            <span className="text-text-secondary text-sm">Generating Class {selectedChapterNum}... {formatElapsed(elapsedSec)}</span>
                           </div>
                         )}
                       </div>
