@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useCourseStore } from '../../store/courseStore';
 import { useApiStore } from '../../store/apiStore';
 import { THEMES, VOICE_OPTIONS, DEFAULT_VOICE_ID, type Theme } from '../../themes';
@@ -48,29 +49,74 @@ function ThemePreviewCard({ theme, selected, onClick }: { theme: Theme; selected
 function VoiceCard({
   voice,
   selected,
+  playing,
   onSelect,
+  onPlay,
 }: {
   voice: typeof VOICE_OPTIONS[number];
   selected: boolean;
+  playing: boolean;
   onSelect: () => void;
+  onPlay: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`w-full p-3 text-left cursor-pointer rounded-lg border transition-all ${
+    <div
+      className={`rounded-lg border transition-all ${
         selected
           ? 'border-violet-500/50 bg-violet-500/10'
           : 'border-violet-500/15 bg-bg-elevated hover:border-violet-500/30'
       }`}
     >
-      <div className={`text-xs font-medium ${
-        selected ? 'text-violet-400' : 'text-text-secondary'
-      }`}>
-        {voice.label}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full p-2.5 pb-0 text-left cursor-pointer bg-transparent border-0"
+      >
+        <div className={`text-xs font-medium ${
+          selected ? 'text-violet-400' : 'text-text-secondary'
+        }`}>
+          {voice.label}
+        </div>
+        <div className="text-xs text-text-muted mt-0.5">{voice.desc}</div>
+      </button>
+
+      <div className="px-2.5 pb-2 pt-1.5">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay();
+          }}
+          className={`flex items-center gap-1.5 text-[11px] cursor-pointer bg-transparent border-0 transition-colors ${
+            playing ? 'text-violet-400' : 'text-text-muted hover:text-text-secondary'
+          }`}
+        >
+          {playing ? (
+            <>
+              <div className="flex items-end gap-[2px] h-3 w-3">
+                {[0, 1, 2].map(i => (
+                  <div
+                    key={i}
+                    className="w-[3px] rounded-full bg-violet-400"
+                    style={{
+                      animation: `voiceBar 0.8s ease-in-out ${i * 0.15}s infinite alternate`,
+                    }}
+                  />
+                ))}
+              </div>
+              Playing...
+            </>
+          ) : (
+            <>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <polygon points="6 3 20 12 6 21" />
+              </svg>
+              Preview
+            </>
+          )}
+        </button>
       </div>
-      <div className="text-xs text-text-muted mt-0.5">{voice.desc}</div>
-    </button>
+    </div>
   );
 }
 
@@ -82,8 +128,40 @@ export function StyleSelector() {
   // Old persisted state may hold ElevenLabs voice IDs; fall back to the Gemini default in that case.
   const selectedVoice = VOICE_OPTIONS.some(v => v.id === storedVoice) ? storedVoice : DEFAULT_VOICE_ID;
 
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlay = useCallback((voiceId: string) => {
+    if (playingId === voiceId) {
+      audioRef.current?.pause();
+      audioRef.current = null;
+      setPlayingId(null);
+      return;
+    }
+    audioRef.current?.pause();
+
+    const audio = new Audio(`/voices/${voiceId.toLowerCase()}.wav`);
+    audioRef.current = audio;
+    setPlayingId(voiceId);
+
+    audio.onended = () => { setPlayingId(null); audioRef.current = null; };
+    audio.onerror = () => { setPlayingId(null); audioRef.current = null; };
+    audio.play().catch(() => { setPlayingId(null); audioRef.current = null; });
+  }, [playingId]);
+
+  useEffect(() => {
+    return () => { audioRef.current?.pause(); };
+  }, []);
+
   return (
     <div className="space-y-5">
+      <style>{`
+        @keyframes voiceBar {
+          0% { height: 3px; }
+          100% { height: 12px; }
+        }
+      `}</style>
+
       <h3 className="text-sm font-medium text-text-primary">Visual Theme</h3>
 
       <div className="grid grid-cols-2 gap-3">
@@ -109,7 +187,9 @@ export function StyleSelector() {
                 key={voice.id}
                 voice={voice}
                 selected={selectedVoice === voice.id}
+                playing={playingId === voice.id}
                 onSelect={() => updateSetup({ voiceId: voice.id })}
+                onPlay={() => handlePlay(voice.id)}
               />
             ))}
           </div>
