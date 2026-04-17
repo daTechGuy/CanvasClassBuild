@@ -890,17 +890,22 @@ export function BuildPage() {
     }
   }, [currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, geminiApiKey, setup.themeId, updateChapter, setTabError, clearTabError]);
 
-  // Generate all outputs for the currently selected chapter
+  // Generate all outputs for the currently selected chapter.
+  // Each generate* already sets tab errors internally; this outer catch only
+  // prevents unhandled-rejection noise when one sibling fails, and logs for
+  // ops visibility.
   const generateAllOutputs = useCallback(async () => {
     if (!currentChapter || !syllabusChapter || !syllabus) return;
+    const logFailure = (kind: string) => (err: unknown) =>
+      console.error(`[generateAllOutputs] ${kind} failed:`, err);
     const tasks: Promise<void>[] = [];
-    if (!quizHtml) tasks.push(generateQuiz().catch(() => {}));
-    if (inClassQuizData.length === 0) tasks.push(generateInClassQuiz().catch(() => {}));
-    if (discussions.length === 0) tasks.push(generateDiscussion().catch(() => {}));
-    if (activities.length === 0) tasks.push(generateActivities().catch(() => {}));
-    if (slidesData.length === 0) tasks.push(generateSlides().catch(() => {}));
-    if (!audioTranscript) tasks.push(generateAudio().catch(() => {}));
-    if (geminiApiKey && !infographicDataUri) tasks.push(generateInfographic().catch(() => {}));
+    if (!quizHtml) tasks.push(generateQuiz().catch(logFailure('quiz')));
+    if (inClassQuizData.length === 0) tasks.push(generateInClassQuiz().catch(logFailure('inclass-quiz')));
+    if (discussions.length === 0) tasks.push(generateDiscussion().catch(logFailure('discussion')));
+    if (activities.length === 0) tasks.push(generateActivities().catch(logFailure('activities')));
+    if (slidesData.length === 0) tasks.push(generateSlides().catch(logFailure('slides')));
+    if (!audioTranscript) tasks.push(generateAudio().catch(logFailure('audio')));
+    if (geminiApiKey && !infographicDataUri) tasks.push(generateInfographic().catch(logFailure('infographic')));
     await Promise.allSettled(tasks);
   }, [currentChapter, syllabusChapter, syllabus, quizHtml, inClassQuizData, discussions, activities, slidesData, audioTranscript, infographicDataUri, geminiApiKey, generateQuiz, generateInClassQuiz, generateDiscussion, generateActivities, generateSlides, generateAudio, generateInfographic]);
 
@@ -910,6 +915,7 @@ export function BuildPage() {
     setBatchGenerating(true);
     batchCancelRef.current = false;
 
+    try {
     const chaptersToGenerate = syllabus.chapters.filter(
       ch => !chapters.find(c => c.number === ch.number)
         && researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
@@ -1043,9 +1049,11 @@ export function BuildPage() {
       }
     }
 
-    setBatchCurrentChapter(null);
-    setBatchPhase(null);
-    setBatchGenerating(false);
+    } finally {
+      setBatchCurrentChapter(null);
+      setBatchPhase(null);
+      setBatchGenerating(false);
+    }
   }, [syllabus, chapters, claudeApiKey, geminiApiKey, researchDossiers, setup.chapterLength, setup.themeId, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase]);
 
   // ─── Full batch generation (all materials for all chapters) ───
@@ -1054,6 +1062,7 @@ export function BuildPage() {
     setBatchGenerating(true);
     batchCancelRef.current = false;
 
+    try {
     const chaptersWithResearch = syllabus.chapters.filter(
       ch => researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
     );
@@ -1353,10 +1362,12 @@ export function BuildPage() {
       }
     }
 
-    setBatchCurrentChapter(null);
-    setBatchPhase(null);
-    setBatchMaterial(null);
-    setBatchGenerating(false);
+    } finally {
+      setBatchCurrentChapter(null);
+      setBatchPhase(null);
+      setBatchMaterial(null);
+      setBatchGenerating(false);
+    }
   }, [syllabus, claudeApiKey, geminiApiKey, researchDossiers, setup, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
 
   const handleProceed = () => {
