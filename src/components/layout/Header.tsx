@@ -9,7 +9,7 @@ export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const isLanding = location.pathname === '/';
-  const { isGenerating } = useUiStore();
+  const { isGenerating, persistError, setPersistError } = useUiStore();
   const { reset, currentStage } = useCourseStore();
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -52,6 +52,24 @@ export function Header() {
         </Link>
 
         <div className="flex items-center gap-4">
+          {/* Save status indicator */}
+          {!isLanding && (
+            persistError ? (
+              <button
+                onClick={() => setPersistError(null)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-error/10 border border-error/20 text-xs text-error cursor-pointer border-0 bg-transparent"
+                title="Click to dismiss"
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+                Save failed
+              </button>
+            ) : hasProgress ? (
+              <span className="flex items-center gap-1.5 text-xs text-text-muted">
+                <div className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+                Saved
+              </span>
+            ) : null
+          )}
           {isGenerating && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}

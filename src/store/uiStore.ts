@@ -10,6 +10,7 @@ interface UiState {
   batchCurrentChapter: number | null;
   batchPhase: 'thinking' | 'writing' | null;
   batchMaterial: string | null;
+  persistError: string | null;
 
   toggleScienceOverlay: () => void;
   setIsGenerating: (v: boolean) => void;
@@ -22,6 +23,7 @@ interface UiState {
   setBatchCurrentChapter: (v: number | null) => void;
   setBatchPhase: (v: 'thinking' | 'writing' | null) => void;
   setBatchMaterial: (v: string | null) => void;
+  setPersistError: (msg: string | null) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -34,6 +36,7 @@ export const useUiStore = create<UiState>((set) => ({
   batchCurrentChapter: null,
   batchPhase: null,
   batchMaterial: null,
+  persistError: null,
 
   toggleScienceOverlay: () =>
     set((state) => ({ showScienceOverlay: !state.showScienceOverlay })),
@@ -48,4 +51,5 @@ export const useUiStore = create<UiState>((set) => ({
   setBatchCurrentChapter: (v) => set({ batchCurrentChapter: v }),
   setBatchPhase: (v) => set({ batchPhase: v }),
   setBatchMaterial: (v) => set({ batchMaterial: v }),
+  setPersistError: (msg) => set({ persistError: msg }),
 }));

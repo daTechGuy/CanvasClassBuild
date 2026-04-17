@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { idbStorage } from './idbStorage';
 import type {
   CourseSetup,
   Syllabus,
@@ -137,7 +138,8 @@ export const useCourseStore = create<CourseState>()(
     }),
     {
       name: 'classbuild-course',
-      version: 2,
+      storage: idbStorage,
+      version: 3,
       migrate(persisted, version) {
         const state = persisted as Record<string, unknown>;
         // v0→v1: migrate old preview/generate stages to build
@@ -158,6 +160,7 @@ export const useCourseStore = create<CourseState>()(
         if (version === undefined || version < 2) {
           if (!('curriculumMap' in state)) state.curriculumMap = null;
         }
+        // v2→v3: move to IndexedDB (no schema changes)
         return state;
       },
       partialize: (state) => ({
@@ -168,11 +171,12 @@ export const useCourseStore = create<CourseState>()(
         syllabusConversation: state.syllabusConversation,
         researchDossiers: state.researchDossiers,
         curriculumMap: state.curriculumMap,
-        // Persist chapters but strip blob URLs (they don't survive page reload)
+        // Persist chapters but strip blob URLs and large data URIs
         chapters: state.chapters.map((c) => ({
           ...c,
           audioUrl: undefined,
           pptxUrl: undefined,
+          infographicDataUri: undefined,
         })),
       }),
     }
