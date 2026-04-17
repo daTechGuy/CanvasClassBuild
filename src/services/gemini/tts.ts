@@ -74,6 +74,46 @@ interface PcmResult {
   bitsPerSample: number;
 }
 
+/**
+ * Build the per-chunk prompt. The shape follows the "Audio Profile / Director's
+ * Notes / Transcript" structure the Gemini TTS docs recommend for consistency
+ * across separate generateContent calls: an identical persona block on every
+ * chunk locks the voice character so part 3 sounds like part 1.
+ *
+ * Repeating the *same* instructions every call is deliberate — it's the only
+ * cross-call context the model gets, since TTS has no conversation history.
+ */
+function buildChunkPrompt(
+  chunk: string,
+  opts: { accent?: string; partIndex: number; partTotal: number },
+): string {
+  const { accent, partIndex, partTotal } = opts;
+  const isMulti = partTotal > 1;
+  const lines: string[] = [
+    'PERSONA',
+    'A single professional narrator reading an educational course chapter aloud to adult learners. Measured pace, even tone, warm but composed. This is audiobook-style delivery — not performative, not dramatic.',
+    '',
+    "DIRECTOR'S NOTES",
+    '- Keep the voice, pitch, energy, and pacing identical throughout. Do not modulate dramatically between sentences.',
+    '- Read as if this is one continuous recording session, not a series of independent takes.',
+  ];
+  if (accent) {
+    lines.push(`- Voice carries a ${accent}. Keep it natural and understated — no exaggeration.`);
+  }
+  if (isMulti) {
+    // Tell the model it's in the middle of a longer reading so it doesn't
+    // re-open with fresh introductory energy on later chunks.
+    lines.push(
+      `- This is passage ${partIndex + 1} of ${partTotal} from the same chapter. ` +
+        (partIndex === 0
+          ? 'Begin as the opening of a calm, sustained reading.'
+          : 'Continue seamlessly from the previous passage — same speaker, same delivery, mid-flow.'),
+    );
+  }
+  lines.push('', 'TRANSCRIPT (read exactly this text aloud, nothing else)', '', chunk);
+  return lines.join('\n');
+}
+
 function chunkText(text: string): string[] {
   const paragraphs = text.split(/\n\n+/);
   const chunks: string[] = [];
@@ -354,18 +394,14 @@ export async function generatePcmAudio(
   const voiceName = options?.voiceName?.trim() || DEFAULT_VOICE_NAME;
   const modelId = options?.modelId?.trim() || DEFAULT_MODEL_ID;
   const accent = options?.accent?.trim();
-  // Softer framing than a direct command — tells the model to stay natural
-  // and only nudge the inflection, not perform a regional caricature.
-  const prefix = accent
-    ? `Read the following transcript naturally and conversationally. The narrator's voice has a ${accent}. Do not exaggerate the accent.\n\n`
-    : '';
 
   const chunks = chunkText(text);
   const pcmChunks: Uint8Array[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     options?.onProgress?.(i + 1, chunks.length);
-    const pcm = await synthesizeChunk(prefix + chunks[i], apiKey, voiceName, modelId);
+    const prompt = buildChunkPrompt(chunks[i], { accent, partIndex: i, partTotal: chunks.length });
+    const pcm = await synthesizeChunk(prompt, apiKey, voiceName, modelId);
     pcmChunks.push(pcm);
   }
 
