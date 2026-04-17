@@ -41,6 +41,12 @@ export interface TtsOptions {
   voiceName?: string;
   /** Override the Gemini TTS model id. */
   modelId?: string;
+  /**
+   * Natural-language accent / delivery direction prepended to every chunk
+   * (e.g. "Australian English accent from Sydney"). Each chunk is a fresh
+   * generateContent call, so the directive must repeat per chunk.
+   */
+  accent?: string;
   /** Called after each chunk with (completed, total) for UI progress. */
   onProgress?: (current: number, total: number) => void;
 }
@@ -277,13 +283,15 @@ export async function generatePcmAudio(
 
   const voiceName = options?.voiceName?.trim() || DEFAULT_VOICE_NAME;
   const modelId = options?.modelId?.trim() || DEFAULT_MODEL_ID;
+  const accent = options?.accent?.trim();
+  const prefix = accent ? `Read the following in a ${accent}:\n\n` : '';
 
   const chunks = chunkText(text);
   const pcmChunks: Uint8Array[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     options?.onProgress?.(i + 1, chunks.length);
-    const pcm = await synthesizeChunk(chunks[i], apiKey, voiceName, modelId);
+    const pcm = await synthesizeChunk(prefix + chunks[i], apiKey, voiceName, modelId);
     pcmChunks.push(pcm);
   }
 

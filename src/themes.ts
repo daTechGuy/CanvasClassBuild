@@ -120,17 +120,29 @@ Use this exact color scheme and design system:
 
 /**
  * Voice options for Gemini TTS. The `id` is the prebuilt voice name passed to
- * the Gemini speech API (e.g. "Kore"). Descriptions are paraphrased from
- * Google's voice library.
+ * the Gemini speech API (e.g. "Kore"). `accent` is a natural-language
+ * direction prepended to every chunk so Gemini steers the delivery
+ * consistently across chunks and between preview + audiobook output.
  */
-export const VOICE_OPTIONS = [
-  { id: 'Kore', label: 'Kore', desc: 'Firm, confident — a good default narrator' },
-  { id: 'Puck', label: 'Puck', desc: 'Upbeat, energetic — for lively material' },
-  { id: 'Charon', label: 'Charon', desc: 'Informative, measured — lecture-friendly' },
-  { id: 'Sulafat', label: 'Sulafat', desc: 'Warm, approachable — story-driven prose' },
-  { id: 'Rasalgethi', label: 'Rasalgethi', desc: 'Clear and knowledgeable — technical topics' },
-  { id: 'Leda', label: 'Leda', desc: 'Youthful, expressive — great for intro chapters' },
+export interface VoiceOption {
+  id: string;
+  label: string;
+  desc: string;
+  accent: string;
+}
+
+export const VOICE_OPTIONS: VoiceOption[] = [
+  { id: 'Kore',       label: 'Kore',       desc: 'Firm American — solid default narrator',             accent: 'standard American English accent' },
+  { id: 'Puck',       label: 'Puck',       desc: 'Upbeat British — lively London presenter',           accent: 'modern British English accent from London' },
+  { id: 'Charon',     label: 'Charon',     desc: 'Measured British — BBC lecture feel',                accent: 'Received Pronunciation British English accent' },
+  { id: 'Sulafat',    label: 'Sulafat',    desc: 'Warm Australian — story-driven prose',               accent: 'Australian English accent from Sydney' },
+  { id: 'Rasalgethi', label: 'Rasalgethi', desc: 'Knowledgeable Scottish — technical topics',          accent: 'Scottish English accent from Edinburgh' },
+  { id: 'Leda',       label: 'Leda',       desc: 'Expressive Irish — great for intro chapters',        accent: 'Irish English accent from Dublin' },
 ];
 
 /** Voice name used when no override is supplied — matches Gemini TTS default. */
 export const DEFAULT_VOICE_ID = 'Kore';
+
+export function getVoiceOption(voiceId: string | undefined): VoiceOption {
+  return VOICE_OPTIONS.find(v => v.id === voiceId) ?? VOICE_OPTIONS[0];
+}

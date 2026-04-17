@@ -12,6 +12,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { generateAudiobook } from '../src/services/gemini/tts';
+import { getVoiceOption } from '../src/themes';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,8 +62,10 @@ async function main() {
 
     console.log(`  ${prefix}: Generating audio (${transcript.length} chars)...`);
     try {
+      const voice = getVoiceOption(VOICE_NAME);
       const audioBlob = await generateAudiobook(transcript, GEMINI_API_KEY!, {
-        voiceName: VOICE_NAME,
+        voiceName: voice.id,
+        accent: voice.accent,
         onProgress: (current, total) => process.stdout.write(`    chunk ${current}/${total}\r`),
       });
       console.log('');

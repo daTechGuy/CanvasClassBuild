@@ -17,6 +17,7 @@ import { Button } from '../components/shared/Button';
 import { ChapterSidebar } from '../components/build/ChapterSidebar';
 import { ResearchPanel } from '../components/build/ResearchPanel';
 import type { SlideData, InClassQuizQuestion, ActivityDetail, WeeklyChallengeData } from '../types/course';
+import { getVoiceOption } from '../themes';
 
 interface DiscussionPrompt {
   prompt: string;
@@ -763,8 +764,10 @@ export function BuildPage() {
         setAudioChunkProgress(null);
         try {
           const { generateAudiobook } = await import('../services/gemini/tts');
+          const voice = getVoiceOption(setup.voiceId);
           const blob = await generateAudiobook(transcript, geminiApiKey, {
-            voiceName: setup.voiceId,
+            voiceName: voice.id,
+            accent: voice.accent,
             onProgress: (current, total) => setAudioChunkProgress({ current, total }),
           });
           const url = URL.createObjectURL(blob);
@@ -794,8 +797,10 @@ export function BuildPage() {
 
     try {
       const { generateAudiobook } = await import('../services/gemini/tts');
+      const voice = getVoiceOption(setup.voiceId);
       const blob = await generateAudiobook(audioTranscript, geminiApiKey, {
-        voiceName: setup.voiceId,
+        voiceName: voice.id,
+        accent: voice.accent,
         onProgress: (current, total) => setAudioChunkProgress({ current, total }),
       });
       const url = URL.createObjectURL(blob);
@@ -1281,7 +1286,8 @@ export function BuildPage() {
             if (geminiApiKey) {
               try {
                 const { generateAudiobook } = await import('../services/gemini/tts');
-                const blob = await generateAudiobook(transcript, geminiApiKey, { voiceName: setup.voiceId });
+                const batchVoice = getVoiceOption(setup.voiceId);
+                const blob = await generateAudiobook(transcript, geminiApiKey, { voiceName: batchVoice.id, accent: batchVoice.accent });
                 const url = URL.createObjectURL(blob);
                 updateChapter(ch.number, { audioUrl: url });
               } catch {

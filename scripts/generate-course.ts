@@ -601,8 +601,11 @@ async function generateAudio(
     log(`    Ch ${prefix} Synthesizing audio with Gemini TTS...`);
     try {
       const { generateAudiobook } = await import('../src/services/gemini/tts');
+      const { getVoiceOption } = await import('../src/themes');
+      const voice = getVoiceOption(setup.voiceId);
       const audioBlob = await generateAudiobook(transcriptText, GEMINI_API_KEY, {
-        voiceName: setup.voiceId,
+        voiceName: voice.id,
+        accent: voice.accent,
         onProgress: (current, total) => log(`      Ch ${prefix} TTS chunk ${current}/${total}`),
       });
       const arrayBuffer = await audioBlob.arrayBuffer();
