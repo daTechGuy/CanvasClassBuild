@@ -93,7 +93,7 @@ const exampleCourses: ExampleCourse[] = [
       cohortSize: '60',
       learnerDetails: 'Tea enthusiasts, home brewers, foodies, and curious generalists \u2014 international audience',
       environment: 'Lecture theatre',
-      voice: 'Amelia \u2014 Friendly, approachable guide',
+      voice: 'Sulafat \u2014 Warm Australian, story-driven prose',
       additionalDetails: 'The course should respect the deep cultural traditions around tea without appropriating or flattening them. Balance sensory, scientific, and historical perspectives. This course should feel like a conversation with a knowledgeable friend, not a textbook. Keep the topics basic and incredibly interesting.',
     },
   },
@@ -115,7 +115,7 @@ const exampleCourses: ExampleCourse[] = [
       cohortSize: '200',
       learnerDetails: 'Adults who can currently run a little (or not at all) and want to complete a marathon \u2014 mixed fitness levels, mixed ages',
       environment: 'Online / hybrid',
-      voice: 'Daniel \u2014 Articulate British academic',
+      voice: 'Charon \u2014 Measured British, lecture-friendly',
       additionalDetails: 'Many will be nervous about injury, time commitment, and whether they\'re "a runner." Tone should be encouraging but honest \u2014 no toxic positivity. Practical, evidence-based, body-positive.\n\nGround in sports science. Widgets should be useful in the moment \u2014 self-assessments, decision tools, knowledge checks rather than ongoing trackers. Tone like a knowledgeable running mate \u2014 direct, warm, no bro-science. The message: finishing is the goal, not your time.',
     },
   },
@@ -137,7 +137,7 @@ const exampleCourses: ExampleCourse[] = [
       cohortSize: '60',
       learnerDetails: 'Mid-career to senior professionals across sectors \u2014 emergency services, corporate management, government, healthcare, military',
       environment: 'Collaborative room',
-      voice: 'Josh \u2014 Casual, energetic narrator',
+      voice: 'Kore \u2014 Firm American, solid default narrator',
       additionalDetails: 'They\'ve likely experienced crises but haven\'t had formal training in crisis leadership. Expect scepticism of theory that doesn\'t match reality. Use real case studies, not hypothetical scenarios.\n\nTopics: defining crisis vs. incident, activation and initial mobilisation, decision-making under pressure and cognitive load, stakeholder mapping, crisis communication, team resilience during prolonged events, post-incident review and learning culture, and building organisational preparedness.\n\nGround in real research: Klein\'s Recognition-Primed Decision model, Weick on sensemaking and Mann Gulch, Reason\'s Swiss cheese model, Dekker on just culture. Use real case studies \u2014 Grenfell Tower, Fukushima, Thai cave rescue, Australian bushfire response, airline incidents.\n\nWidgets: crisis decision simulations, stakeholder mapping exercises, communication drafting under time pressure. Tone: direct and credible \u2014 no corporate jargon, no "learnings."',
     },
   },
@@ -159,7 +159,7 @@ const exampleCourses: ExampleCourse[] = [
       cohortSize: '60',
       learnerDetails: 'Third-year students across economics, politics, psychology, biology, philosophy, and computer science',
       environment: 'Collaborative room',
-      voice: 'Daniel \u2014 Articulate British academic',
+      voice: 'Charon \u2014 Measured British, lecture-friendly',
       additionalDetails: 'No calculus assumed but they should be comfortable with basic algebra. They need to see equations as tools for precise thinking, not obstacles. Use diverse applications \u2014 if every example is about firms competing, you\'ve lost half the room. Australian and international examples.\n\nChapter structure: 1) Thinking Strategically \u2014 prisoner\'s dilemma, brief history. 2) Representing Games \u2014 normal and extensive form. 3) Dominant Strategies & Nash Equilibrium. 4) Mixed Strategies \u2014 matching pennies, penalty kicks, actual algebra. 5) Sequential Games & Backward Induction. 6) Repeated Games & Cooperation \u2014 Axelrod\'s tournaments. 7) Information & Signalling \u2014 Spence\'s job market model. 8) Auction Theory \u2014 Milgrom & Wilson 2020 Nobel. 9) Evolutionary Game Theory \u2014 hawk-dove, cooperation in nature. 10) Bargaining & Negotiation. 11) Voting & Social Choice \u2014 Arrow\'s impossibility theorem. 12) Games in the Wild \u2014 climate, arms races, algorithmic game theory.\n\nCite: von Neumann & Morgenstern, Nash, Selten, Harsanyi, Axelrod, Maynard Smith, Spence, Arrow, Milgrom & Wilson. Widgets: play prisoner\'s dilemma, compute Nash equilibria, run auctions, build game trees, simulate evolutionary dynamics. Tone: intellectually exciting, not dry \u2014 game theory is inherently dramatic.',
     },
   },
@@ -428,16 +428,16 @@ export function LandingPage() {
               </p>
               <div className="flex gap-3 justify-end">
                 <button
-                  onClick={continueCurrent}
-                  className="px-4 py-2 rounded-lg bg-bg-elevated text-text-secondary text-sm font-medium hover:bg-bg-card transition cursor-pointer border-0"
-                >
-                  Continue Course
-                </button>
-                <button
                   onClick={confirmStartFresh}
-                  className="px-4 py-2 rounded-lg bg-violet-500 text-white text-sm font-medium hover:bg-violet-600 transition cursor-pointer border-0"
+                  className="px-4 py-2 rounded-lg bg-bg-elevated text-text-secondary text-sm font-medium hover:bg-error/10 hover:text-error transition cursor-pointer border-0"
                 >
                   Start Fresh
+                </button>
+                <button
+                  onClick={continueCurrent}
+                  className="px-4 py-2 rounded-lg bg-violet-500 text-white text-sm font-medium hover:bg-violet-600 transition cursor-pointer border-0"
+                >
+                  Continue Course
                 </button>
               </div>
             </motion.div>
@@ -675,7 +675,7 @@ export function LandingPage() {
         >
           <h2 className="text-3xl font-bold mb-4">Five stages. One click at a time.</h2>
           <p className="text-text-secondary max-w-lg mx-auto">
-            A full 12-chapter course takes about 2 hours to build and costs around $20–30. Audiobook narration is optional — about $5/month.
+            A full 12-chapter course takes about 2 hours to build and costs around $20–30 in Claude credits. Audiobook narration and infographics are included — covered by Google's free $300 Gemini trial.
           </p>
         </motion.div>
 

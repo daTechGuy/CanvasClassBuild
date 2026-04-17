@@ -57,7 +57,7 @@ const defaultSetup: CourseSetup = {
   chapterLength: 'standard',
   widgetsPerChapter: 2,
   themeId: 'midnight',
-  voiceId: 'ZF6FPAbjXT4488VcRRnw',
+  voiceId: 'Kore',
 };
 
 export const useCourseStore = create<CourseState>()(
