@@ -47,6 +47,13 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
     return 'The request was rejected. Try regenerating — if it keeps failing, refine your topic.';
   }
 
+  // Stale client after a new deploy: the running page references a code-split
+  // chunk whose hash no longer exists, so the dynamic import fails with
+  // "Failed to fetch dynamically imported module" or a MIME-type error.
+  if (/dynamically imported module|mime type of "text\/html"|module script/i.test(message)) {
+    return 'ClassBuild was updated while this tab was open. Refresh the page (Cmd/Ctrl+Shift+R) and retry.';
+  }
+
   // Network
   if (/failed to fetch|network|ecconnreset|timeout|timed out|econnref/i.test(message)) {
     return 'Network error. Check your connection and retry.';
