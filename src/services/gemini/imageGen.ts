@@ -50,7 +50,7 @@ export async function generateInfographic(
   prompt: string,
   apiKey: string,
 ): Promise<string> {
-  const model = 'gemini-3-pro-image-preview';
+  const model = 'gemini-3.1-flash-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const body = {
