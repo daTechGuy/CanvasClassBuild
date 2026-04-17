@@ -132,12 +132,12 @@ export interface VoiceOption {
 }
 
 export const VOICE_OPTIONS: VoiceOption[] = [
-  { id: 'Kore',       label: 'Kore',       desc: 'Firm American — solid default narrator',             accent: 'standard American English accent' },
-  { id: 'Puck',       label: 'Puck',       desc: 'Upbeat British — lively London presenter',           accent: 'modern British English accent from London' },
-  { id: 'Charon',     label: 'Charon',     desc: 'Measured British — BBC lecture feel',                accent: 'Received Pronunciation British English accent' },
-  { id: 'Sulafat',    label: 'Sulafat',    desc: 'Warm Australian — story-driven prose',               accent: 'Australian English accent from Sydney' },
-  { id: 'Rasalgethi', label: 'Rasalgethi', desc: 'Knowledgeable Scottish — technical topics',          accent: 'Scottish English accent from Edinburgh' },
-  { id: 'Leda',       label: 'Leda',       desc: 'Expressive Irish — great for intro chapters',        accent: 'Irish English accent from Dublin' },
+  { id: 'Kore',       label: 'Kore',       desc: 'Firm American — solid default narrator',    accent: '' },
+  { id: 'Puck',       label: 'Puck',       desc: 'Upbeat American — energetic delivery',      accent: '' },
+  { id: 'Charon',     label: 'Charon',     desc: 'Measured British — lecture-friendly',       accent: 'subtle educated British inflection' },
+  { id: 'Sulafat',    label: 'Sulafat',    desc: 'Warm Australian — story-driven prose',      accent: 'gentle Australian inflection' },
+  { id: 'Rasalgethi', label: 'Rasalgethi', desc: 'Knowledgeable American — technical topics', accent: '' },
+  { id: 'Leda',       label: 'Leda',       desc: 'Youthful British — lively intro chapters',  accent: 'light British inflection' },
 ];
 
 /** Voice name used when no override is supplied — matches Gemini TTS default. */

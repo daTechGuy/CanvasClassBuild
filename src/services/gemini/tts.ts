@@ -284,7 +284,11 @@ export async function generatePcmAudio(
   const voiceName = options?.voiceName?.trim() || DEFAULT_VOICE_NAME;
   const modelId = options?.modelId?.trim() || DEFAULT_MODEL_ID;
   const accent = options?.accent?.trim();
-  const prefix = accent ? `Read the following in a ${accent}:\n\n` : '';
+  // Softer framing than a direct command — tells the model to stay natural
+  // and only nudge the inflection, not perform a regional caricature.
+  const prefix = accent
+    ? `Read the following transcript naturally and conversationally. The narrator's voice has a ${accent}. Do not exaggerate the accent.\n\n`
+    : '';
 
   const chunks = chunkText(text);
   const pcmChunks: Uint8Array[] = [];
