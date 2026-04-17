@@ -2,13 +2,11 @@ import { motion } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { STAGES } from '../../types/course';
 import { useCourseStore } from '../../store/courseStore';
-import { useUiStore } from '../../store/uiStore';
 
 export function StageIndicator() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentStage, completedStages, chapters } = useCourseStore();
-  const { isGenerating } = useUiStore();
   const currentIndex = STAGES.findIndex((s) => s.id === currentStage);
   const hasChapters = chapters.length > 0;
 
@@ -21,7 +19,7 @@ export function StageIndicator() {
         const isOnThisPage = location.pathname === stage.path;
         // Allow Generate/Export once any chapter exists (partial export)
         const isUnlockedByContent = hasChapters && (stage.id === 'build' || stage.id === 'export');
-        const isClickable = !isGenerating && !isOnThisPage && (isComplete || isPast || isCurrent || isUnlockedByContent);
+        const isClickable = !isOnThisPage && (isComplete || isPast || isCurrent || isUnlockedByContent);
 
         return (
           <div key={stage.id} className="flex items-center">
