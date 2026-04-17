@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCourseStore } from '../../store/courseStore';
+import { isSafeHttpUrl } from '../../utils/url';
 
 interface ResearchPanelProps {
   chapterNum: number;
@@ -53,7 +54,7 @@ export function ResearchPanel({ chapterNum }: ResearchPanelProps) {
                       {source.authors}{source.year ? ` (${source.year})` : ''}
                     </p>
                   )}
-                  {source.url && (
+                  {isSafeHttpUrl(source.url) && (
                     <a
                       href={source.url}
                       target="_blank"

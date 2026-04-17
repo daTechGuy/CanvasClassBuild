@@ -1454,6 +1454,13 @@ export function buildQuizHtml(
 
     <script>
         document.addEventListener('DOMContentLoaded', function () {
+            // Escape untrusted AI-generated strings before injecting as HTML.
+            function escapeHtml(s) {
+                return String(s).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                });
+            }
+
             // Quiz state
             let quizQuestions = [];
             let currentQuestionIndex = 0;
@@ -1801,7 +1808,7 @@ export function buildQuizHtml(
                 const question = quizQuestions[currentQuestionIndex];
 
                 hintContainer.innerHTML = '';
-                questionText.innerHTML = '<h3>' + question.text + '</h3>';
+                questionText.innerHTML = '<h3>' + escapeHtml(question.text) + '</h3>';
 
                 let options = question.options.filter(option => ['a', 'b', 'c', 'd'].includes(option.id));
                 options = options.slice(0, 4);
@@ -1828,7 +1835,7 @@ export function buildQuizHtml(
                     optionElement.className = 'option';
                     optionElement.dataset.id = option.id;
 
-                    optionElement.innerHTML = '<span class="option-marker">' + option.id.toUpperCase() + '</span>' + option.text;
+                    optionElement.innerHTML = '<span class="option-marker">' + option.id.toUpperCase() + '</span>' + escapeHtml(option.text);
 
                     optionElement.addEventListener('click', selectOption);
                     optionsContainer.appendChild(optionElement);
@@ -2114,7 +2121,7 @@ export function buildQuizHtml(
                     feedbackResult.className = 'incorrect';
                 }
 
-                feedbackText.innerHTML = question.feedback;
+                feedbackText.innerHTML = escapeHtml(question.feedback);
 
                 // Generate metacognitive feedback
                 let metaTitle = '';

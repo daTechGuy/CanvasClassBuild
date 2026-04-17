@@ -9,6 +9,7 @@ import type { WebSearchResult } from '../services/claude/streaming';
 import { Button } from '../components/shared/Button';
 import type { ResearchDossier } from '../types/course';
 import { validateDois } from '../utils/doiValidator';
+import { isSafeHttpUrl } from '../utils/url';
 import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt, parseResearchResponse } from '../prompts/research';
 
 type ResearchPhase = 'idle' | 'thinking' | 'searching' | 'compiling' | 'validating';
@@ -511,7 +512,7 @@ export function ResearchPage() {
                         {source.isVerified ? 'Verified' : 'Verify'}
                       </span>
                     </div>
-                    {source.url && (
+                    {isSafeHttpUrl(source.url) && (
                       <a
                         href={source.url}
                         target="_blank"
