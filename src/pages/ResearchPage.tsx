@@ -10,6 +10,7 @@ import { Button } from '../components/shared/Button';
 import type { ResearchDossier } from '../types/course';
 import { validateDois } from '../utils/doiValidator';
 import { isSafeHttpUrl } from '../utils/url';
+import { friendlyError } from '../utils/errors';
 import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt, parseResearchResponse } from '../prompts/research';
 
 type ResearchPhase = 'idle' | 'thinking' | 'searching' | 'compiling' | 'validating';
@@ -154,7 +155,7 @@ export function ResearchPage() {
 
       addResearchDossier(dossier);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Research failed';
+      const message = friendlyError(err, 'Research failed.');
       updateChapterState(chapterNum, s => ({ ...s, error: message }));
 
       if (message.includes('web_search') || message.includes('tool')) {

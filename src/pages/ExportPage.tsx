@@ -10,6 +10,7 @@ import { buildPracticeQuizPrompt, buildPracticeQuizUserPrompt } from '../prompts
 import { buildInClassQuizPrompt, buildInClassQuizUserPrompt } from '../prompts/inClassQuiz';
 import { Button } from '../components/shared/Button';
 import type { InClassQuizQuestion } from '../types/course';
+import { friendlyError } from '../utils/errors';
 
 function extractHtml(text: string): string {
   const htmlMatch = text.match(/```html\s*\n?([\s\S]*?)\n?```/);
@@ -121,7 +122,7 @@ export function ExportPage() {
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
       downloadFile(blob, `weekly-challenge-${chapterNum}-${sanitizeFilename(chapter.title)}-scorm.zip`, 'application/zip');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'SCORM export failed');
+      setError(friendlyError(err, 'SCORM export failed.'));
     }
   }, [chapters, syllabus, setup.themeId, setError]);
 
@@ -411,7 +412,7 @@ export function ExportPage() {
         } catch { /* parse failed */ }
       } catch { /* continue */ }
     } catch (err) {
-      setError(`Failed to generate Chapter ${chapterNum}: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Chapter ${chapterNum}: ${friendlyError(err, 'generation failed.')}`);
     } finally {
       setIsGenerating(false);
       setGeneratingChapter(null);
@@ -503,7 +504,7 @@ export function ExportPage() {
       const courseName = sanitizeFilename(syllabus.courseTitle) || 'course';
       downloadFile(html, `${courseName}-published.html`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Publish failed');
+      setError(friendlyError(err, 'Publish failed.'));
     } finally {
       setIsPublishing(false);
     }

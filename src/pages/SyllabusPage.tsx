@@ -13,6 +13,7 @@ import { ScienceOverlay } from '../components/syllabus/ScienceOverlay';
 import { CurriculumMapPanel } from '../components/syllabus/CurriculumMapPanel';
 import { InlineFeedback } from '../components/syllabus/InlineFeedback';
 import type { ChapterSyllabus } from '../types/course';
+import { friendlyError } from '../utils/errors';
 
 export function SyllabusPage() {
   const navigate = useNavigate();
@@ -95,7 +96,7 @@ export function SyllabusPage() {
         setError('Failed to parse syllabus. The model may have returned malformed JSON. Try regenerating.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
+      setError(friendlyError(err, 'Syllabus generation failed.'));
     } finally {
       setIsGenerating(false);
       setIsThinking(false);

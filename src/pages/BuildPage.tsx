@@ -19,6 +19,7 @@ import { ResearchPanel } from '../components/build/ResearchPanel';
 import type { SlideData, InClassQuizQuestion, ActivityDetail, WeeklyChallengeData } from '../types/course';
 import { getVoiceOption } from '../themes';
 import { slugify, extractHtml, parseJson } from '../utils/format';
+import { friendlyError } from '../utils/errors';
 
 interface DiscussionPrompt {
   prompt: string;
@@ -360,7 +361,7 @@ export function BuildPage() {
         htmlContent: html,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Chapter generation failed');
+      setError(friendlyError(err, 'Chapter generation failed.'));
     } finally {
       setIsGenerating(false);
       setThinkingText('');
@@ -445,7 +446,7 @@ export function BuildPage() {
       setChapterHtml(html);
       updateChapter(selectedChapterNum, { htmlContent: html });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Chapter refinement failed');
+      setError(friendlyError(err, 'Chapter refinement failed.'));
     } finally {
       setIsGenerating(false);
       setThinkingText('');
@@ -500,7 +501,7 @@ export function BuildPage() {
         }
       }
     } catch (err) {
-      setTabError('quiz', err instanceof Error ? err.message : 'Quiz generation failed');
+      setTabError('quiz', friendlyError(err, 'Quiz generation failed.'));
     } finally {
       setGeneratingQuiz(null);
     }
@@ -538,7 +539,7 @@ export function BuildPage() {
         setTabError('inclassquiz', 'Failed to parse in-class quiz data');
       }
     } catch (err) {
-      setTabError('inclassquiz', err instanceof Error ? err.message : 'In-class quiz generation failed');
+      setTabError('inclassquiz', friendlyError(err, 'In-class quiz generation failed.'));
     } finally {
       setGeneratingInClassQuiz(null);
     }
@@ -602,7 +603,7 @@ export function BuildPage() {
         setTabError('weeklychallenge', 'Failed to parse weekly challenge data');
       }
     } catch (err) {
-      setTabError('weeklychallenge', err instanceof Error ? err.message : 'Weekly challenge generation failed');
+      setTabError('weeklychallenge', friendlyError(err, 'Weekly challenge generation failed.'));
     } finally {
       setGeneratingWeeklyChallenge(null);
     }
@@ -637,7 +638,7 @@ export function BuildPage() {
         setTabError('discussion', 'Failed to parse discussion prompts');
       }
     } catch (err) {
-      setTabError('discussion', err instanceof Error ? err.message : 'Discussion generation failed');
+      setTabError('discussion', friendlyError(err, 'Discussion generation failed.'));
     } finally {
       setGeneratingDiscussion(null);
     }
@@ -672,7 +673,7 @@ export function BuildPage() {
         setTabError('activities', 'Failed to parse activities');
       }
     } catch (err) {
-      setTabError('activities', err instanceof Error ? err.message : 'Activities generation failed');
+      setTabError('activities', friendlyError(err, 'Activities generation failed.'));
     } finally {
       setGeneratingActivities(null);
     }
@@ -712,7 +713,7 @@ export function BuildPage() {
         setError(`Failed to parse activity details: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Activity detail generation failed');
+      setError(friendlyError(err, 'Activity detail generation failed.'));
     } finally {
       setExpandingActivity(null);
     }
@@ -759,13 +760,13 @@ export function BuildPage() {
           if (selectedChapterRef.current === capturedChapter) setAudioUrl(url);
           updateChapter(capturedChapter, { audioUrl: url });
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = friendlyError(err, 'Audio synthesis failed.');
           console.error('Gemini TTS failed:', err);
           if (selectedChapterRef.current === capturedChapter) setAudioError(msg);
         }
       }
     } catch (err) {
-      setTabError('audio', err instanceof Error ? err.message : 'Audio transcript generation failed');
+      setTabError('audio', friendlyError(err, 'Audio transcript generation failed.'));
     } finally {
       setGeneratingAudio(null);
       setAudioPhase(null);
@@ -792,7 +793,7 @@ export function BuildPage() {
       setAudioUrl(url);
       updateChapter(selectedChapterNum, { audioUrl: url });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = friendlyError(err, 'Audio synthesis failed.');
       console.error('Gemini TTS retry failed:', err);
       setAudioError(msg);
     } finally {
@@ -831,7 +832,7 @@ export function BuildPage() {
         setTabError('slides', 'Failed to parse slide data from response');
       }
     } catch (err) {
-      setTabError('slides', err instanceof Error ? err.message : 'Slides generation failed');
+      setTabError('slides', friendlyError(err, 'Slides generation failed.'));
     } finally {
       setGeneratingSlides(null);
     }
@@ -869,7 +870,7 @@ export function BuildPage() {
       if (selectedChapterRef.current === capturedChapter) setInfographicDataUri(dataUri);
       updateChapter(capturedChapter, { infographicDataUri: dataUri });
     } catch (err) {
-      setTabError('infographic', err instanceof Error ? err.message : 'Infographic generation failed');
+      setTabError('infographic', friendlyError(err, 'Infographic generation failed.'));
     } finally {
       setGeneratingInfographic(null);
     }
@@ -1030,7 +1031,7 @@ export function BuildPage() {
           // Weekly challenge generation failed, continue
         }
       } catch (err) {
-        setError(`Failed to generate Class ${ch.number}: ${err instanceof Error ? err.message : String(err)}`);
+        setError(`Class ${ch.number}: ${friendlyError(err, 'generation failed.')}`);
       }
     }
 
@@ -1098,7 +1099,7 @@ export function BuildPage() {
           }
           addChapter({ number: ch.number, title: ch.title, htmlContent: html });
         } catch (err) {
-          setError(`Failed to generate Class ${ch.number}: ${err instanceof Error ? err.message : String(err)}`);
+          setError(`Class ${ch.number}: ${friendlyError(err, 'generation failed.')}`);
           continue; // Skip entire chapter if reading fails
         }
       }
@@ -1950,7 +1951,7 @@ export function BuildPage() {
                                 a.click();
                                 URL.revokeObjectURL(url);
                               } catch (err) {
-                                setError(err instanceof Error ? err.message : 'Quiz export failed');
+                                setError(friendlyError(err, 'Quiz export failed.'));
                               }
                             }}
                           >
@@ -2647,7 +2648,7 @@ export function BuildPage() {
                                 const blob = await generatePptx(slidesData, syllabus!.courseTitle, syllabusChapter!.title, setup.themeId);
                                 downloadFile(blob, `slides-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.pptx`);
                               } catch (err) {
-                                setError(err instanceof Error ? err.message : 'Slides export failed');
+                                setError(friendlyError(err, 'Slides export failed.'));
                               }
                             }}
                           >

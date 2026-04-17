@@ -10,6 +10,7 @@ import {
 } from '../../prompts/learningObjectives';
 import { Button } from '../shared/Button';
 import type { AlignmentLevel } from '../../types/course';
+import { friendlyError } from '../../utils/errors';
 
 const ALIGNMENT_STYLES: Record<AlignmentLevel, { label: string; bg: string; text: string }> = {
   introduced: { label: 'I', bg: 'bg-blue-500/15', text: 'text-blue-400' },
@@ -56,7 +57,7 @@ export function CurriculumMapPanel() {
         setError('Failed to parse curriculum map. Try regenerating.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
+      setError(friendlyError(err, 'Curriculum map generation failed.'));
     } finally {
       setIsGenerating(false);
     }
