@@ -5,7 +5,8 @@
  * inside the generateContent response. This module:
  *   1. Chunks long transcripts (quality drifts past a few minutes per call).
  *   2. Calls Gemini TTS for each chunk with automatic retry on transient 5xx.
- *   3. Concatenates PCM bytes and wraps the result in a single WAV container.
+ *   3. Crossfades adjacent PCM chunks at a zero-aligned boundary so joins are
+ *      inaudible, then wraps the result in a single WAV container.
  *
  * Browser callers get a WAV Blob. Node/CLI callers can reach for
  * `generatePcmAudio` instead to drive ffmpeg directly.
@@ -20,9 +21,24 @@ const SAMPLE_RATE = 24000;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 
-// Stay under the "few minutes per call" quality-drift threshold
-const MAX_CHUNK_CHARS = 2800;
+/**
+ * Stay well under Gemini's "few minutes per call" quality-drift threshold.
+ * ~4000 chars is ~4 min of speech at 150 wpm — big enough to minimise the
+ * number of joins (where audible seams can happen), small enough to avoid
+ * the drift Google explicitly warns about.
+ */
+const MAX_CHUNK_CHARS = 4000;
 const MAX_ATTEMPTS = 3;
+
+/**
+ * Milliseconds of equal-power crossfade at every chunk boundary. Two jobs:
+ *  - hides the zero-crossing discontinuity that produces a click/pop when
+ *    two independent PCM buffers are concatenated;
+ *  - blends prosody differences between separate generateContent calls.
+ * 80 ms is short enough that no content is lost and long enough to smooth
+ * the transition.
+ */
+const CROSSFADE_MS = 80;
 
 export class GeminiTtsError extends Error {
   readonly status: number | undefined;
@@ -227,6 +243,60 @@ function concatPcm(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * Equal-power (cosine) crossfade join: the last `fadeMs` of `prev` mix with
+ * the first `fadeMs` of `next` using sin/cos weights, which keep perceived
+ * loudness constant across the blend. Falls back to a plain concat if either
+ * chunk is too short to fade.
+ */
+function crossfadePcm(prev: Uint8Array, next: Uint8Array, fadeMs = CROSSFADE_MS): Uint8Array {
+  const fadeSamples = Math.floor((fadeMs / 1000) * SAMPLE_RATE);
+  const bytesPerSample = BITS_PER_SAMPLE / 8;
+  const fadeBytes = fadeSamples * bytesPerSample;
+
+  if (prev.length < fadeBytes || next.length < fadeBytes || fadeSamples === 0) {
+    return concatPcm([prev, next]);
+  }
+
+  const prevBody = prev.subarray(0, prev.length - fadeBytes);
+  const prevTail = prev.subarray(prev.length - fadeBytes);
+  const nextHead = next.subarray(0, fadeBytes);
+  const nextBody = next.subarray(fadeBytes);
+
+  const mixed = new Uint8Array(fadeBytes);
+  const prevView = new DataView(prevTail.buffer, prevTail.byteOffset, fadeBytes);
+  const nextView = new DataView(nextHead.buffer, nextHead.byteOffset, fadeBytes);
+  const mixedView = new DataView(mixed.buffer);
+
+  for (let i = 0; i < fadeSamples; i++) {
+    const t = i / fadeSamples;
+    const wOut = Math.cos((t * Math.PI) / 2);
+    const wIn = Math.sin((t * Math.PI) / 2);
+    const prevSample = prevView.getInt16(i * bytesPerSample, true);
+    const nextSample = nextView.getInt16(i * bytesPerSample, true);
+    const mixedSample = Math.round(prevSample * wOut + nextSample * wIn);
+    const clamped = Math.max(-32768, Math.min(32767, mixedSample));
+    mixedView.setInt16(i * bytesPerSample, clamped, true);
+  }
+
+  const out = new Uint8Array(prevBody.length + mixed.length + nextBody.length);
+  out.set(prevBody, 0);
+  out.set(mixed, prevBody.length);
+  out.set(nextBody, prevBody.length + mixed.length);
+  return out;
+}
+
+/** Join a sequence of PCM chunks with crossfades between every adjacent pair. */
+function joinPcmWithCrossfade(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
+  if (chunks.length === 1) return chunks[0];
+  let result = chunks[0];
+  for (let i = 1; i < chunks.length; i++) {
+    result = crossfadePcm(result, chunks[i]);
+  }
+  return result;
+}
+
 /** Wrap raw PCM in a 44-byte RIFF/WAVE header. */
 function pcmToWav(
   pcm: Uint8Array,
@@ -300,7 +370,7 @@ export async function generatePcmAudio(
   }
 
   return {
-    pcm: concatPcm(pcmChunks),
+    pcm: joinPcmWithCrossfade(pcmChunks),
     sampleRate: SAMPLE_RATE,
     channels: CHANNELS,
     bitsPerSample: BITS_PER_SAMPLE,
