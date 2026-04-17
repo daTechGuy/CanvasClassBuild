@@ -1,5 +1,5 @@
 export interface ProviderConfig {
-  id: 'claude' | 'elevenLabs' | 'gemini';
+  id: 'claude' | 'gemini';
   heading: string;
   connectedHeading: string;
   tagline: string;
@@ -16,11 +16,8 @@ export interface ProviderConfig {
 export const CLAUDE_COST_NOTE =
   'Pay-as-you-go \u2014 a full course typically costs around $20\u201330, depending on length.';
 
-export const ELEVENLABS_COST_NOTE =
-  'Starter plan ($5/mo) recommended \u2014 a full course audiobook uses ~60\u201390 min of quota.';
-
 export const GEMINI_COST_NOTE =
-  'Free to start \u2014 Google gives you $300 in trial credits. Each image costs ~$0.04.';
+  'Free to start \u2014 Google gives you $300 in trial credits. Covers infographics plus voice narration.';
 
 export const CLAUDE_CONFIG: ProviderConfig = {
   id: 'claude',
@@ -52,38 +49,12 @@ export const CLAUDE_CONFIG: ProviderConfig = {
     'Check that you copied the full key from console.anthropic.com and that your account has API credits.',
 };
 
-export const ELEVENLABS_CONFIG: ProviderConfig = {
-  id: 'elevenLabs',
-  heading: 'Add voice narration',
-  connectedHeading: 'Voice narration connected',
-  tagline:
-    'Students can listen to chapters read aloud \u2014 great for accessibility.',
-  required: false,
-  costNote: ELEVENLABS_COST_NOTE,
-  deepLink: 'https://elevenlabs.io/app/settings/api-keys',
-  deepLinkLabel: 'Open ElevenLabs Settings',
-  steps: [
-    { text: 'Sign up for a free account at elevenlabs.io' },
-    { text: 'Go to Settings \u2192 API Keys and create a key' },
-    { text: 'Make sure "Restrict Key" is toggled off' },
-  ],
-  placeholder: 'xi-...',
-  warnings: [
-    {
-      type: 'alert',
-      text: 'Restricted API keys won\u2019t work with ClassBuild. Toggle off "Restrict Key" in your ElevenLabs settings.',
-    },
-  ],
-  validationFailHint:
-    'Make sure the key is correct and that "Restrict Key" is toggled off in your ElevenLabs settings.',
-};
-
 export const GEMINI_CONFIG: ProviderConfig = {
   id: 'gemini',
-  heading: 'Add infographics',
-  connectedHeading: 'Infographics connected',
+  heading: 'Add infographics & voice narration',
+  connectedHeading: 'Infographics & voice connected',
   tagline:
-    'Generate custom illustrations and diagrams for your chapters.',
+    'Generate custom illustrations for each chapter and a full spoken audiobook from your transcripts.',
   required: false,
   costNote: GEMINI_COST_NOTE,
   deepLink: 'https://aistudio.google.com/apikey',
@@ -108,4 +79,4 @@ export const GEMINI_CONFIG: ProviderConfig = {
     'Check that you copied the full key from AI Studio and that your Google account has API access enabled.',
 };
 
-export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, ELEVENLABS_CONFIG, GEMINI_CONFIG] as const;
+export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, GEMINI_CONFIG] as const;

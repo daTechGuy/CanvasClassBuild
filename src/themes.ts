@@ -118,10 +118,19 @@ Use this exact color scheme and design system:
 - Section dividers: gradient line from transparent through ${theme.accent} to transparent`;
 }
 
-/** Voice options for ElevenLabs TTS */
+/**
+ * Voice options for Gemini TTS. The `id` is the prebuilt voice name passed to
+ * the Gemini speech API (e.g. "Kore"). Descriptions are paraphrased from
+ * Google's voice library.
+ */
 export const VOICE_OPTIONS = [
-  { id: 'ZF6FPAbjXT4488VcRRnw', label: 'Amelia', desc: 'Friendly, approachable guide' },
-  { id: 'TxGEqnHWrfWFTfGW9XjX', label: 'Josh', desc: 'Casual, energetic narrator' },
-  { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel', desc: 'Articulate British academic' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Sarah', desc: 'Warm, approachable educator' },
+  { id: 'Kore', label: 'Kore', desc: 'Firm, confident — a good default narrator' },
+  { id: 'Puck', label: 'Puck', desc: 'Upbeat, energetic — for lively material' },
+  { id: 'Charon', label: 'Charon', desc: 'Informative, measured — lecture-friendly' },
+  { id: 'Sulafat', label: 'Sulafat', desc: 'Warm, approachable — story-driven prose' },
+  { id: 'Rasalgethi', label: 'Rasalgethi', desc: 'Clear and knowledgeable — technical topics' },
+  { id: 'Leda', label: 'Leda', desc: 'Youthful, expressive — great for intro chapters' },
 ];
+
+/** Voice name used when no override is supplied — matches Gemini TTS default. */
+export const DEFAULT_VOICE_ID = 'Kore';

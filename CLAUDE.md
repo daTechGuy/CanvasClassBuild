@@ -46,10 +46,10 @@ src/
 │   ├── claude/
 │   │   ├── client.ts                # Anthropic SDK wrapper, model IDs, thinking budgets
 │   │   └── streaming.ts            # streamMessage() — streaming with web search + thinking
-│   ├── elevenlabs/tts.ts           # TTS (dynamic import)
 │   ├── gemini/
 │   │   ├── imageGen.ts             # Gemini image generation (dynamic import)
-│   │   └── imagePlacer.ts          # Replace image placeholders in HTML
+│   │   ├── imagePlacer.ts          # Replace image placeholders in HTML
+│   │   └── tts.ts                  # Gemini text-to-speech (dynamic import)
 │   ├── quiz/answerBalancer.ts      # Balance correct/distractor answers
 │   └── export/
 │       ├── pptxExporter.ts         # PowerPoint (dynamic import)

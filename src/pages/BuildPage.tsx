@@ -101,7 +101,7 @@ async function replaceGeminiPlaceholders(html: string, apiKey: string): Promise<
 export function BuildPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setup, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey, elevenLabsApiKey, geminiApiKey } = useApiStore();
+  const { claudeApiKey, geminiApiKey } = useApiStore();
   const { isGenerating, setIsGenerating, streamingText, setStreamingText, appendStreamingText, error, setError, activeTab, setActiveTab, batchGenerating, batchCurrentChapter, batchPhase, batchMaterial, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial } = useUiStore();
 
   const [selectedChapterNum, setSelectedChapterNum] = useState(1);
@@ -758,13 +758,13 @@ export function BuildPage() {
       if (selectedChapterRef.current === capturedChapter) setAudioTranscript(transcript);
       updateChapter(capturedChapter, { audioTranscript: transcript });
 
-      if (elevenLabsApiKey) {
+      if (geminiApiKey) {
         setAudioPhase('synthesizing');
         setAudioChunkProgress(null);
         try {
-          const { generateAudiobook } = await import('../services/elevenlabs/tts');
-          const blob = await generateAudiobook(transcript, elevenLabsApiKey, {
-            voiceId: setup.voiceId,
+          const { generateAudiobook } = await import('../services/gemini/tts');
+          const blob = await generateAudiobook(transcript, geminiApiKey, {
+            voiceName: setup.voiceId,
             onProgress: (current, total) => setAudioChunkProgress({ current, total }),
           });
           const url = URL.createObjectURL(blob);
@@ -772,7 +772,7 @@ export function BuildPage() {
           updateChapter(capturedChapter, { audioUrl: url });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('ElevenLabs TTS failed:', err);
+          console.error('Gemini TTS failed:', err);
           if (selectedChapterRef.current === capturedChapter) setAudioError(msg);
         }
       }
@@ -783,19 +783,19 @@ export function BuildPage() {
       setAudioPhase(null);
       setAudioChunkProgress(null);
     }
-  }, [currentChapter, syllabus, selectedChapterNum, claudeApiKey, elevenLabsApiKey, updateChapter, setTabError, clearTabError]);
+  }, [currentChapter, syllabus, selectedChapterNum, claudeApiKey, geminiApiKey, updateChapter, setTabError, clearTabError]);
 
   const retryAudio = useCallback(async () => {
-    if (!audioTranscript || !elevenLabsApiKey) return;
+    if (!audioTranscript || !geminiApiKey) return;
     setGeneratingAudio(selectedChapterNum);
     setAudioPhase('synthesizing');
     setAudioError('');
     setAudioChunkProgress(null);
 
     try {
-      const { generateAudiobook } = await import('../services/elevenlabs/tts');
-      const blob = await generateAudiobook(audioTranscript, elevenLabsApiKey, {
-        voiceId: setup.voiceId,
+      const { generateAudiobook } = await import('../services/gemini/tts');
+      const blob = await generateAudiobook(audioTranscript, geminiApiKey, {
+        voiceName: setup.voiceId,
         onProgress: (current, total) => setAudioChunkProgress({ current, total }),
       });
       const url = URL.createObjectURL(blob);
@@ -803,14 +803,14 @@ export function BuildPage() {
       updateChapter(selectedChapterNum, { audioUrl: url });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('ElevenLabs TTS retry failed:', err);
+      console.error('Gemini TTS retry failed:', err);
       setAudioError(msg);
     } finally {
       setGeneratingAudio(null);
       setAudioPhase(null);
       setAudioChunkProgress(null);
     }
-  }, [audioTranscript, elevenLabsApiKey, selectedChapterNum, updateChapter]);
+  }, [audioTranscript, geminiApiKey, selectedChapterNum, updateChapter]);
 
   const generateSlides = useCallback(async () => {
     if (!currentChapter || !syllabus || !syllabusChapter) return;
@@ -1278,10 +1278,10 @@ export function BuildPage() {
             );
             updateChapter(ch.number, { audioTranscript: transcript });
 
-            if (elevenLabsApiKey) {
+            if (geminiApiKey) {
               try {
-                const { generateAudiobook } = await import('../services/elevenlabs/tts');
-                const blob = await generateAudiobook(transcript, elevenLabsApiKey, { voiceId: setup.voiceId });
+                const { generateAudiobook } = await import('../services/gemini/tts');
+                const blob = await generateAudiobook(transcript, geminiApiKey, { voiceName: setup.voiceId });
                 const url = URL.createObjectURL(blob);
                 updateChapter(ch.number, { audioUrl: url });
               } catch {
@@ -1351,7 +1351,7 @@ export function BuildPage() {
     setBatchPhase(null);
     setBatchMaterial(null);
     setBatchGenerating(false);
-  }, [syllabus, claudeApiKey, geminiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+  }, [syllabus, claudeApiKey, geminiApiKey, researchDossiers, setup, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
 
   const handleProceed = () => {
     if (anyBusy) {
@@ -2477,14 +2477,14 @@ export function BuildPage() {
                               </div>
                               <div className="flex-1">
                                 <p className="text-sm font-medium">Class Audiobook</p>
-                                <p className="text-xs text-text-muted">Generated with ElevenLabs v3</p>
+                                <p className="text-xs text-text-muted">Generated with Gemini TTS</p>
                               </div>
                               <Button
                                 size="sm"
                                 onClick={() => {
                                   const a = document.createElement('a');
                                   a.href = audioUrl;
-                                  a.download = `audio-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.mp3`;
+                                  a.download = `audio-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.wav`;
                                   a.click();
                                 }}
                               >
@@ -2493,7 +2493,7 @@ export function BuildPage() {
                                   <polyline points="7 10 12 15 17 10" />
                                   <line x1="12" y1="15" x2="12" y2="3" />
                                 </svg>
-                                Download .mp3
+                                Download .wav
                               </Button>
                             </div>
                             <audio controls className="w-full" src={audioUrl}>
@@ -2501,7 +2501,7 @@ export function BuildPage() {
                             </audio>
                           </div>
                         )}
-                        {!audioUrl && elevenLabsApiKey && audioError && (
+                        {!audioUrl && geminiApiKey && audioError && (
                           <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
                             <p className="text-amber-400 text-sm mb-1">
                               Audio synthesis failed: {audioError}
@@ -2511,7 +2511,7 @@ export function BuildPage() {
                             </Button>
                           </div>
                         )}
-                        {!audioUrl && elevenLabsApiKey && !audioError && (
+                        {!audioUrl && geminiApiKey && !audioError && (
                           <div className="bg-bg-card border border-violet-500/10 rounded-xl p-4 text-center">
                             {generatingAudio ? (
                               <div className="flex flex-col items-center gap-3">
@@ -2551,9 +2551,9 @@ export function BuildPage() {
                             )}
                           </div>
                         )}
-                        {!audioUrl && !elevenLabsApiKey && (
+                        {!audioUrl && !geminiApiKey && (
                           <div className="bg-bg-card border border-violet-500/10 rounded-xl p-4 text-center">
-                            <p className="text-text-secondary text-sm">Transcript ready — add an ElevenLabs API key in Setup to generate audio.</p>
+                            <p className="text-text-secondary text-sm">Transcript ready — add a Gemini API key in Setup to generate audio.</p>
                           </div>
                         )}
                       </div>
@@ -2598,9 +2598,9 @@ export function BuildPage() {
                             </div>
                             <p className="text-text-secondary mb-1">Class Audiobook</p>
                             <p className="text-text-muted text-xs mb-4">
-                              {elevenLabsApiKey
-                                ? 'AI-adapted transcript + ElevenLabs v3 audio synthesis'
-                                : 'Generate a spoken-word transcript (add ElevenLabs key in Setup for audio)'}
+                              {geminiApiKey
+                                ? 'AI-adapted transcript + Gemini TTS audio synthesis'
+                                : 'Generate a spoken-word transcript (add Gemini key in Setup for audio)'}
                             </p>
                             <Button onClick={generateAudio} disabled={!currentChapter || !!generatingAudio}>
                               Generate Audiobook

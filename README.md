@@ -26,7 +26,7 @@ Describe your subject and ClassBuild produces a full course: interactive chapter
 - Gamified practice quiz with confidence calibration, streaks, and achievements
 - In-class quiz (5 shuffled versions + answer keys)
 - PowerPoint slides with speaker notes
-- AI-narrated audiobook (ElevenLabs)
+- AI-narrated audiobook (Gemini TTS)
 - AI-generated infographic (Gemini)
 - Teaching pack: discussion starters, activities, and current events hooks
 - Weekly mastery challenge with 6 question types and SCORM 2004 for Blackboard
@@ -50,8 +50,7 @@ Open [localhost:5173](http://localhost:5173) and enter your API key on the Setup
 | Key | Required | Purpose |
 |-----|----------|---------|
 | Anthropic Claude | Yes | Course generation (all stages) |
-| ElevenLabs | No | Voice narration |
-| Google Gemini | No | AI-generated infographics |
+| Google Gemini | No | Voice narration (TTS) and AI-generated infographics |
 
 ## How does ClassBuild work?
 
@@ -80,7 +79,7 @@ ANTHROPIC_API_KEY=sk-... npx tsx scripts/generate-course.ts \
   --output ./output/prejudice
 ```
 
-Set `ELEVENLABS_API_KEY` and `GEMINI_API_KEY` as environment variables for audio and infographics.
+Set `GEMINI_API_KEY` as an environment variable to enable audio narration and infographics. Install `ffmpeg` if you want the CLI to transcode WAV output to MP3.
 
 ## What does each CLI flag do?
 
@@ -95,7 +94,7 @@ Set `ELEVENLABS_API_KEY` and `GEMINI_API_KEY` as environment variables for audio
 | `--cohort` | `60` | Expected class size |
 | `--environment` | `lecture-theatre` | `lecture-theatre`, `collaborative`, `flat-classroom`, `online-hybrid` |
 | `--notes` | — | Additional context for the AI (audience, tone, specific topics) |
-| `--voice-id` | — | ElevenLabs voice ID for audiobook narration |
+| `--voice-id` | — | Gemini TTS voice name for audiobook narration (e.g. `Kore`, `Puck`, `Charon`) |
 | `--syllabus` | — | Path to existing syllabus.json (skip regeneration) |
 | `--stop-after` | — | `syllabus` or `research` — stop early for review |
 | `--no-publish` | `false` | Skip course viewer assembly |
@@ -157,7 +156,7 @@ The syllabus stage annotates every chapter with the specific principles it empha
 
 ## Built with
 
-React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · Framer Motion · Claude Opus 4.6 / Sonnet 4.6 / Haiku 4.5 · ElevenLabs · Gemini
+React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · Framer Motion · Claude Opus 4.6 / Sonnet 4.6 / Haiku 4.5 · Gemini (image generation + TTS)
 
 Built with Claude for the [Anthropic Hackathon](https://docs.google.com/forms/d/e/1FAIpQLSdAmDqfWux_oP_E55aSaXRahq6lkSi3jBWG4PlMOmhgVUhg-w/viewform) (Feb 2026).
 

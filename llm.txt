@@ -2,7 +2,7 @@
 
 > AI-powered course generator that takes a topic and produces a complete, ready-to-teach university course — interactive HTML chapters, gamified quizzes, PowerPoint slides, AI-narrated audiobooks, infographics, and teaching packs — all grounded in five evidence-based learning science principles. Built with TypeScript, React 19, Vite 7, and Claude.
 
-ClassBuild operates as both a browser app (React + Zustand + Vite at localhost:5173) and a headless CLI (`scripts/generate-course.ts`). API keys are bring-your-own: Anthropic Claude (required), ElevenLabs (optional, audio), Google Gemini (optional, infographics).
+ClassBuild operates as both a browser app (React + Zustand + Vite at localhost:5173) and a headless CLI (`scripts/generate-course.ts`). API keys are bring-your-own: Anthropic Claude (required), Google Gemini (optional, covers infographics and voice narration via Gemini TTS).
 
 ## Architecture
 
@@ -14,8 +14,7 @@ The codebase has two entry points sharing the same generation core:
 Key directories:
 - `src/prompts/` — All LLM prompt builders (system + user prompts for each generation stage)
 - `src/services/claude/` — Anthropic SDK client, streaming with retry, model constants
-- `src/services/elevenlabs/` — Text-to-speech via ElevenLabs API (chunked at 2800 chars)
-- `src/services/gemini/` — Image generation and placement for infographics
+- `src/services/gemini/` — Image generation for infographics and text-to-speech (chunked at 2800 chars; PCM wrapped as WAV)
 - `src/services/export/` — PPTX, quiz DOCX, and publish exporters
 - `src/services/quiz/` — Answer balancer for quiz generation
 - `src/types/` — TypeScript interfaces for the entire domain model
@@ -37,7 +36,7 @@ The pipeline has five stages, each with dedicated prompt builders in `src/prompt
    - **In-class quiz** (`src/prompts/inClassQuiz.ts`) — 5 shuffled versions + answer keys
    - **Discussion questions** (`src/prompts/discussion.ts`)
    - **Activities** (`src/prompts/activities.ts`) — Facilitated activities with step-by-step guides
-   - **Audio transcript** (`src/prompts/audioTranscript.ts`) — Narration script sent to ElevenLabs TTS
+   - **Audio transcript** (`src/prompts/audioTranscript.ts`) — Narration script sent to Gemini TTS
    - **Slides** (`src/prompts/slides.ts`) — JSON slide data rendered to PPTX via pptxgenjs
    - **Weekly challenge** (`src/prompts/weeklyChallenge.ts`) — Mastery-gated assessment with 6 question types, parameterised variants, SCORM 2004 wrapper for Blackboard
    - **Infographic** (`src/prompts/infographic.ts`) — Claude writes a prompt, Gemini generates the image
@@ -66,12 +65,12 @@ Flags:
 - `--cohort` (default 60): Expected class size
 - `--environment` (default lecture-theatre): `lecture-theatre`, `collaborative`, `flat-classroom`, `online-hybrid`
 - `--notes`: Additional context for the AI
-- `--voice-id`: ElevenLabs voice ID for audiobook narration
+- `--voice-id`: Gemini TTS voice name for audiobook narration (e.g. `Kore`, `Puck`, `Charon`)
 - `--syllabus`: Path to existing syllabus.json (skip regeneration)
 - `--stop-after`: `syllabus` or `research` — stop early for review
 - `--no-publish`: Skip course viewer assembly
 
-Environment variables: `ANTHROPIC_API_KEY` (required), `ELEVENLABS_API_KEY` (optional), `GEMINI_API_KEY` (optional).
+Environment variables: `ANTHROPIC_API_KEY` (required), `GEMINI_API_KEY` (optional — enables infographics and TTS). Install `ffmpeg` if you want the CLI to transcode WAV audio to MP3.
 
 ## AI Models and Services
 
@@ -84,9 +83,9 @@ Extended thinking budgets: `max` (32k tokens), `high` (16k), `medium` (8k), `low
 
 Streaming (`src/services/claude/streaming.ts`): All Claude calls use streaming with retry. Callbacks for `onText`, `onThinking`, `onToolUse`, `onWebSearch`, `onWebSearchResults`, `onDone`, `onError`.
 
-ElevenLabs (`src/services/elevenlabs/tts.ts`): Text-to-speech using `eleven_v3` model. Text chunked at 2800 chars respecting paragraph/sentence boundaries. Default voice: Amelia (ZF6FPAbjXT4488VcRRnw).
+Gemini TTS (`src/services/gemini/tts.ts`): Text-to-speech using `gemini-2.5-flash-preview-tts`. Text chunked at 2800 chars respecting paragraph/sentence boundaries to avoid quality drift. PCM (24 kHz, 16-bit, mono) concatenated into a single WAV container. Default voice: `Kore`. Retries transient 5xx errors per the Gemini docs.
 
-Gemini (`src/services/gemini/imageGen.ts`): Generates infographic images from Claude-written prompts. Serialized requests with retry and backoff.
+Gemini Images (`src/services/gemini/imageGen.ts`): Generates infographic images from Claude-written prompts. Serialized requests with retry and backoff.
 
 ## Core Types
 
@@ -130,11 +129,13 @@ Four themes defined in `src/themes.ts`, each with full color system (pageBg, car
 
 ## Voice Options
 
-ElevenLabs voices (`src/themes.ts`):
-- Amelia (ZF6FPAbjXT4488VcRRnw) — Friendly, approachable guide
-- Josh (TxGEqnHWrfWFTfGW9XjX) — Casual, energetic narrator
-- Daniel (onwK4e9ZLuTAKqWW03F9) — Articulate British academic
-- Sarah (EXAVITQu4vr4xnSDxMaL) — Warm, approachable educator
+Gemini TTS voices (`src/themes.ts`):
+- Kore — Firm, confident default narrator
+- Puck — Upbeat, energetic
+- Charon — Informative, measured (lecture-friendly)
+- Sulafat — Warm, approachable
+- Rasalgethi — Clear, knowledgeable (technical topics)
+- Leda — Youthful, expressive
 
 ## Key Source Files
 
@@ -147,7 +148,7 @@ ElevenLabs voices (`src/themes.ts`):
 - `scripts/gen-audio.ts`: Standalone audio generation script
 - `src/services/claude/client.ts`: Anthropic SDK singleton, model constants, thinking budgets
 - `src/services/claude/streaming.ts`: Streaming with retry, web search integration
-- `src/services/elevenlabs/tts.ts`: Text-to-speech with chunking
+- `src/services/gemini/tts.ts`: Gemini text-to-speech with chunking, retry, and WAV wrapping
 - `src/services/gemini/imageGen.ts`: Gemini image generation with retry
 - `src/services/gemini/imagePlacer.ts`: Browser-side image placeholder replacement
 - `src/services/export/pptxExporter.ts`: PowerPoint generation via pptxgenjs

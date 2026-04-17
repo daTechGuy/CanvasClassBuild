@@ -7,7 +7,7 @@
  *   - Parallel material generation per chapter (quizzes + Sonnet tasks)
  *   - DOCX output for discussion, activities, transcript, research
  *   - No JSON output except course.json and syllabus.json
- *   - ffmpeg remux for correct MP3 duration headers
+ *   - Gemini TTS audiobook synthesis, transcoded to MP3 via ffmpeg when available
  *   - --notes flag for learner notes (e.g. Australian perspective)
  *
  * Usage:
@@ -19,7 +19,7 @@
  *     --output ./output/prejudice
  */
 
-import { writeFile, mkdir, readFile, rename, unlink } from 'node:fs/promises';
+import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { execFile } from 'node:child_process';
@@ -95,7 +95,6 @@ if (!values.topic) {
 }
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!ANTHROPIC_API_KEY) {
@@ -224,21 +223,22 @@ async function runWithConcurrency<T>(tasks: Task<T>[], limit: number): Promise<P
   return results;
 }
 
-// ─── ffmpeg MP3 remux ────────────────────────────────────────────
+// ─── ffmpeg WAV → MP3 transcode ──────────────────────────────────
 
-async function remuxMp3(rawPath: string): Promise<string> {
-  const fixedPath = rawPath.replace(/\.mp3$/, '_fixed.mp3');
+/**
+ * Transcode the given WAV file to MP3 and return the final file path.
+ * Falls back to the source WAV if ffmpeg is not installed.
+ */
+async function wavToMp3(wavPath: string): Promise<string> {
+  const mp3Path = wavPath.replace(/\.wav$/, '.mp3');
   try {
-    await execFileAsync('ffmpeg', ['-y', '-i', rawPath, '-c', 'copy', fixedPath]);
-    // Replace raw with fixed
-    await unlink(rawPath);
-    await rename(fixedPath, rawPath);
-    return rawPath;
+    await execFileAsync('ffmpeg', ['-y', '-i', wavPath, '-codec:a', 'libmp3lame', '-qscale:a', '2', mp3Path]);
+    await unlink(wavPath);
+    return mp3Path;
   } catch {
-    log('    Warning: ffmpeg not available — MP3 duration metadata may be incorrect');
-    // Clean up partial fixed file if it exists
-    try { await unlink(fixedPath); } catch { /* ignore */ }
-    return rawPath;
+    log('    Warning: ffmpeg not available — keeping WAV (install ffmpeg for MP3 output)');
+    try { await unlink(mp3Path); } catch { /* ignore */ }
+    return wavPath;
   }
 }
 
@@ -596,21 +596,20 @@ async function generateAudio(
     log(`    Ch ${prefix} Transcript DOCX error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // TTS if ElevenLabs key available
-  if (ELEVENLABS_API_KEY) {
-    log(`    Ch ${prefix} Synthesizing audio with ElevenLabs...`);
+  // TTS if Gemini key available
+  if (GEMINI_API_KEY) {
+    log(`    Ch ${prefix} Synthesizing audio with Gemini TTS...`);
     try {
-      const { generateAudiobook } = await import('../src/services/elevenlabs/tts');
-      const audioBlob = await generateAudiobook(transcriptText, ELEVENLABS_API_KEY, {
-        voiceId: setup.voiceId,
+      const { generateAudiobook } = await import('../src/services/gemini/tts');
+      const audioBlob = await generateAudiobook(transcriptText, GEMINI_API_KEY, {
+        voiceName: setup.voiceId,
         onProgress: (current, total) => log(`      Ch ${prefix} TTS chunk ${current}/${total}`),
       });
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const mp3Path = join(OUTPUT_DIR, 'audio', `${prefix}.mp3`);
-      await save(mp3Path, Buffer.from(arrayBuffer));
-      // Remux to fix duration metadata
-      await remuxMp3(mp3Path);
-      log(`    Ch ${prefix} Saved MP3 audio`);
+      const wavPath = join(OUTPUT_DIR, 'audio', `${prefix}.wav`);
+      await save(wavPath, Buffer.from(arrayBuffer));
+      const finalPath = await wavToMp3(wavPath);
+      log(`    Ch ${prefix} Saved ${finalPath.endsWith('.mp3') ? 'MP3' : 'WAV'} audio`);
     } catch (err) {
       log(`    Ch ${prefix} TTS error: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -811,8 +810,7 @@ async function main() {
   log(`Output directory: ${OUTPUT_DIR}`);
   log(`Models: Opus=${MODELS.opus}, Sonnet=${MODELS.sonnet}`);
   if (setup.learnerNotes) log(`Notes: ${setup.learnerNotes}`);
-  if (GEMINI_API_KEY) log('Gemini API key detected — infographics enabled');
-  if (ELEVENLABS_API_KEY) log('ElevenLabs API key detected — TTS enabled');
+  if (GEMINI_API_KEY) log('Gemini API key detected — infographics and TTS enabled');
 
   await ensureDir(OUTPUT_DIR);
 

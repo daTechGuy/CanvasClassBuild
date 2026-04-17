@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useApiStore } from '../../store/apiStore';
 import { MODELS } from '../../services/claude/client';
 import { ProviderCard } from './ProviderCard';
-import { CLAUDE_CONFIG, ELEVENLABS_CONFIG, GEMINI_CONFIG } from './providerConfigs';
+import { CLAUDE_CONFIG, GEMINI_CONFIG } from './providerConfigs';
 
 export function ApiKeyPanel() {
   const {
-    claudeApiKey, elevenLabsApiKey, geminiApiKey,
-    claudeKeyValid, elevenLabsKeyValid, geminiKeyValid,
-    isValidatingClaude, isValidatingElevenLabs, isValidatingGemini,
-    setClaudeApiKey, setElevenLabsApiKey, setGeminiApiKey,
-    setClaudeKeyValid, setElevenLabsKeyValid, setGeminiKeyValid,
-    setIsValidatingClaude, setIsValidatingElevenLabs, setIsValidatingGemini,
+    claudeApiKey, geminiApiKey,
+    claudeKeyValid, geminiKeyValid,
+    isValidatingClaude, isValidatingGemini,
+    setClaudeApiKey, setGeminiApiKey,
+    setClaudeKeyValid, setGeminiKeyValid,
+    setIsValidatingClaude, setIsValidatingGemini,
   } = useApiStore();
 
   const validateClaude = useCallback(async () => {
@@ -36,21 +36,6 @@ export function ApiKeyPanel() {
     }
   }, [claudeApiKey, setClaudeKeyValid, setIsValidatingClaude]);
 
-  const validateElevenLabs = useCallback(async () => {
-    if (!elevenLabsApiKey.trim()) return;
-    setIsValidatingElevenLabs(true);
-    try {
-      const res = await fetch('https://api.elevenlabs.io/v1/user', {
-        headers: { 'xi-api-key': elevenLabsApiKey.trim() },
-      });
-      setElevenLabsKeyValid(res.ok);
-    } catch {
-      setElevenLabsKeyValid(false);
-    } finally {
-      setIsValidatingElevenLabs(false);
-    }
-  }, [elevenLabsApiKey, setElevenLabsKeyValid, setIsValidatingElevenLabs]);
-
   const validateGemini = useCallback(async () => {
     if (!geminiApiKey.trim()) return;
     setIsValidatingGemini(true);
@@ -72,7 +57,6 @@ export function ApiKeyPanel() {
     if (mountedRef.current) return;
     mountedRef.current = true;
     if (claudeApiKey.trim() && claudeKeyValid === null) validateClaude();
-    if (elevenLabsApiKey.trim() && elevenLabsKeyValid === null) validateElevenLabs();
     if (geminiApiKey.trim() && geminiKeyValid === null) validateGemini();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -100,14 +84,6 @@ export function ApiKeyPanel() {
         setKey={setClaudeApiKey}
         validate={validateClaude}
         defaultExpanded={!claudeApiKey}
-      />
-      <ProviderCard
-        config={ELEVENLABS_CONFIG}
-        apiKey={elevenLabsApiKey}
-        keyValid={elevenLabsKeyValid}
-        isValidating={isValidatingElevenLabs}
-        setKey={setElevenLabsApiKey}
-        validate={validateElevenLabs}
       />
       <ProviderCard
         config={GEMINI_CONFIG}

@@ -312,7 +312,7 @@ export function ProviderCard({
       </div>
 
       <p className="text-[11px] text-text-muted mt-2">
-        Stored in your browser only. Sent directly to {config.id === 'claude' ? 'Anthropic' : config.id === 'elevenLabs' ? 'ElevenLabs' : 'Google'}.
+        Stored in your browser only. Sent directly to {config.id === 'claude' ? 'Anthropic' : 'Google'}.
       </p>
 
       {/* Validation error */}

@@ -39,7 +39,7 @@ const ENVIRONMENT_LABELS: Record<string, string> = {
 export function SetupPage() {
   const navigate = useNavigate();
   const { setup, setStage, completeStage, resetDownstream } = useCourseStore();
-  const { claudeApiKey, claudeKeyValid, elevenLabsKeyValid, geminiKeyValid, elevenLabsApiKey, geminiApiKey } = useApiStore();
+  const { claudeApiKey, claudeKeyValid, geminiKeyValid, geminiApiKey } = useApiStore();
 
   const hasTopic = setup.topic.trim().length > 10;
   const hasApiKey = claudeApiKey.trim().length > 0;
@@ -160,12 +160,8 @@ export function SetupPage() {
                   Claude {claudeKeyValid === true ? '✓' : claudeApiKey ? '?' : '✗'}
                 </span>
                 {' · '}
-                <span className={elevenLabsKeyValid === true ? 'text-emerald-400' : elevenLabsApiKey ? 'text-amber-400' : 'text-text-muted'}>
-                  Narration {elevenLabsKeyValid === true ? '✓' : elevenLabsApiKey ? '?' : '—'}
-                </span>
-                {' · '}
                 <span className={geminiKeyValid === true ? 'text-emerald-400' : geminiApiKey ? 'text-amber-400' : 'text-text-muted'}>
-                  Infographics {geminiKeyValid === true ? '✓' : geminiApiKey ? '?' : '—'}
+                  Voice &amp; Infographics {geminiKeyValid === true ? '✓' : geminiApiKey ? '?' : '—'}
                 </span>
               </span>
             </div>

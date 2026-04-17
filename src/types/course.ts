@@ -195,7 +195,7 @@ export interface GeneratedChapter {
   activityData?: Array<{ title: string; duration: string; description: string; materials: string; learningGoal: string; scalingNotes: string }>;
   activityDetails?: Record<number, ActivityDetail>;
   audioTranscript?: string;
-  audioUrl?: string; // blob URL from ElevenLabs
+  audioUrl?: string; // blob URL from Gemini TTS (WAV)
   slidesJson?: SlideData[];
   pptxUrl?: string; // blob URL
   infographicDataUri?: string; // data:image/jpeg;base64,...

@@ -755,7 +755,6 @@ export function LandingPage() {
           <span className="text-text-muted text-xs">Powered by</span>
           {[
             { label: 'Claude', sub: 'Anthropic', color: '#8b5cf6' },
-            { label: 'ElevenLabs', sub: 'Voice', color: '#64748b' },
             { label: 'Gemini', sub: 'Google', color: '#3b82f6' },
           ].map((b) => (
             <span
