@@ -75,7 +75,7 @@ Environment variables: `ANTHROPIC_API_KEY` (required), `GEMINI_API_KEY` (optiona
 ## AI Models and Services
 
 Claude models (`src/services/claude/client.ts`):
-- `claude-opus-4-7` — Syllabus design and chapter writing (high-quality, extended thinking)
+- `claude-opus-4-6` — Syllabus design and chapter writing (high-quality, extended thinking)
 - `claude-sonnet-4-6` — Quizzes, discussions, activities, slides, research (fast, parallel tasks)
 - `claude-haiku-4-5` — Lightweight tasks
 
