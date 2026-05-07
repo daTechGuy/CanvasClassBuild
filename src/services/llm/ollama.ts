@@ -1,7 +1,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { StreamCallbacks, StreamOptions } from './types';
 
-const OLLAMA_CLOUD_URL = 'https://ollama.com/api/chat';
+// In dev, route through Vite's proxy because ollama.com doesn't set CORS
+// headers. In prod (no proxy), the direct URL will fail with the same CORS
+// error — production deployments need a real server-side proxy.
+const OLLAMA_CLOUD_URL = import.meta.env.DEV
+  ? '/ollama-proxy/api/chat'
+  : 'https://ollama.com/api/chat';
 
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';

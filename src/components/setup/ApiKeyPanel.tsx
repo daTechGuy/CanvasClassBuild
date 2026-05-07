@@ -57,16 +57,37 @@ export function ApiKeyPanel() {
     if (!ollamaApiKey.trim()) return;
     setIsValidatingOllama(true);
     try {
-      const res = await fetch('https://ollama.com/api/tags', {
-        headers: { Authorization: `Bearer ${ollamaApiKey.trim()}` },
+      // Hit the same /api/chat endpoint we'll use at runtime so any CORS,
+      // auth, or model-access failure surfaces here rather than mid-stream.
+      const ollamaUrl = import.meta.env.DEV
+        ? '/ollama-proxy/api/chat'
+        : 'https://ollama.com/api/chat';
+      const res = await fetch(ollamaUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ollamaApiKey.trim()}`,
+        },
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          stream: false,
+        }),
       });
       setOllamaKeyValid(res.ok);
-    } catch {
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        // eslint-disable-next-line no-console
+        console.warn('Ollama validation failed', res.status, detail);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('Ollama validation error (likely CORS or network):', err);
       setOllamaKeyValid(false);
     } finally {
       setIsValidatingOllama(false);
     }
-  }, [ollamaApiKey, setOllamaKeyValid, setIsValidatingOllama]);
+  }, [ollamaApiKey, ollamaModel, setOllamaKeyValid, setIsValidatingOllama]);
 
   // Auto-validate stored keys on mount
   const mountedRef = useRef(false);

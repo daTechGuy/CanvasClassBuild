@@ -97,7 +97,7 @@ export const OLLAMA_CONFIG: ProviderConfig = {
     { text: 'Click "Create key" and copy it' },
     { text: 'Paste it below and switch the provider toggle to Ollama' },
   ],
-  placeholder: 'ollama-...',
+  placeholder: 'e.g. 0c5b33c8fe21440b955d5af824e3a5b2.mJroz...',
   warnings: [
     {
       type: 'info',
