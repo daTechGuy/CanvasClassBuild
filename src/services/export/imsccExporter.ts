@@ -1,0 +1,433 @@
+import type {
+  Syllabus,
+  GeneratedChapter,
+  InClassQuizQuestion,
+  WeeklyChallengeData,
+  ChallengeQuestion,
+} from '../../types/course';
+
+// ── Helpers ──
+
+function escXml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function slug(s: string): string {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
+}
+
+// ── Quiz model normalization (everything funnels into MCQ for QTI 1.2) ──
+
+interface ParsedMcq {
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  feedback?: string;
+}
+
+/**
+ * Parse the markdown format used by `practiceQuizData`. Mirrors the parser in
+ * `src/templates/quizTemplate.ts` (option `a` is always the correct answer in
+ * source; the runtime quiz randomizes order at display time).
+ */
+function parsePracticeQuizMarkdown(md: string): ParsedMcq[] {
+  const out: ParsedMcq[] = [];
+  const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const sections = norm.split(/\n\s*---\s*\n/);
+  for (const sec of sections) {
+    const t = sec.trim();
+    if (!t) continue;
+    const qm = t.match(/^\s*\d+\.\s+\*\*([^*]+)\*\*/);
+    if (!qm) continue;
+    const prompt = qm[1].trim();
+    const opts: { id: string; text: string }[] = [];
+    const re = /\s+([a-d])\.\s+(.*?)(?=\s+[a-d]\.\s+|\s+\*\*Answer|\s*$)/gs;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) {
+      if (['a', 'b', 'c', 'd'].includes(m[1])) {
+        opts.push({ id: m[1], text: m[2].trim() });
+      }
+      if (opts.length >= 4) break;
+    }
+    if (opts.length === 0) continue;
+    const fbm = t.match(/\*\*Feedback\*\*:\s*([\s\S]*?)(?=\s*$)/);
+    out.push({
+      prompt,
+      options: opts.map((o) => o.text),
+      correctIndex: 0,
+      feedback: fbm ? fbm[1].trim() : undefined,
+    });
+  }
+  return out;
+}
+
+function inClassToMcq(q: InClassQuizQuestion): ParsedMcq {
+  return {
+    prompt: q.question,
+    options: [q.correctAnswer, ...q.distractors.map((d) => d.text)],
+    correctIndex: 0,
+    feedback: q.correctFeedback,
+  };
+}
+
+function challengeToMcq(q: ChallengeQuestion): ParsedMcq | null {
+  if (q.type === 'mcq' || q.type === 'confidence-weighted') {
+    return {
+      prompt: q.stem,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      feedback: q.feedback?.correct,
+    };
+  }
+  if (q.type === 'two-stage' || q.type === 'boss') {
+    return {
+      prompt: q.stem,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      feedback: q.feedback?.correct,
+    };
+  }
+  // assertion-reason / agreement-matrix / slider-estimation: not cleanly
+  // representable in QTI 1.2 single-MCQ; the rich HTML version is shipped
+  // alongside as a webcontent resource so the content is still usable.
+  return null;
+}
+
+function weeklyToMcqs(d: WeeklyChallengeData): ParsedMcq[] {
+  const out: ParsedMcq[] = [];
+  for (const q of d.questions) {
+    const mcq = challengeToMcq(q);
+    if (mcq) out.push(mcq);
+  }
+  return out;
+}
+
+// ── QTI 1.2 builders (Canvas-flavored, CC 1.1 profile) ──
+
+function qtiItem(id: string, mcq: ParsedMcq): string {
+  const choiceLabels = mcq.options
+    .map((opt, i) => {
+      const letter = String.fromCharCode(65 + i);
+      return `<response_label ident="${letter}"><material><mattext texttype="text/plain">${escXml(opt)}</mattext></material></response_label>`;
+    })
+    .join('');
+  const correctLetter = String.fromCharCode(65 + mcq.correctIndex);
+  const fbBlock = mcq.feedback
+    ? `<itemfeedback ident="${id}_fb"><flow_mat><material><mattext texttype="text/plain">${escXml(mcq.feedback)}</mattext></material></flow_mat></itemfeedback>`
+    : '';
+  const fbLink = mcq.feedback ? `<displayfeedback feedbacktype="Response" linkrefid="${id}_fb"/>` : '';
+  return `<item ident="${id}" title="${escXml(mcq.prompt.slice(0, 80))}">
+  <itemmetadata>
+    <qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>multiple_choice_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata>
+  </itemmetadata>
+  <presentation>
+    <material><mattext texttype="text/html">${escXml(mcq.prompt)}</mattext></material>
+    <response_lid ident="response1" rcardinality="Single">
+      <render_choice>${choiceLabels}</render_choice>
+    </response_lid>
+  </presentation>
+  <resprocessing>
+    <outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>
+    <respcondition continue="No">
+      <conditionvar><varequal respident="response1">${correctLetter}</varequal></conditionvar>
+      <setvar action="Set" varname="SCORE">100</setvar>
+      ${fbLink}
+    </respcondition>
+  </resprocessing>
+  ${fbBlock}
+</item>`;
+}
+
+function qtiAssessment(assessmentId: string, title: string, mcqs: ParsedMcq[]): string {
+  const items = mcqs.map((m, i) => qtiItem(`${assessmentId}_Q${i + 1}`, m)).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_qtiasiv1p2p1_v1p0.xsd">
+  <assessment ident="${assessmentId}" title="${escXml(title)}">
+    <section ident="root_section">${items}</section>
+  </assessment>
+</questestinterop>`;
+}
+
+// ── Manifest assembly ──
+
+interface ResourceRecord {
+  id: string;
+  type: string;
+  href: string;
+  files: string[];
+  title: string;
+}
+
+interface ChapterModule {
+  number: number;
+  title: string;
+  resources: ResourceRecord[];
+}
+
+const QTI_RESOURCE_TYPE = 'imsqti_xmlv1p2/imscc_xmlv1p1/assessment';
+
+function buildManifest(
+  syllabus: Syllabus,
+  modules: ChapterModule[],
+  extraResources: ResourceRecord[],
+): string {
+  const courseId = `classbuild-${slug(syllabus.courseTitle) || 'course'}`;
+
+  const moduleItems = modules
+    .map((m) => {
+      const subItems = m.resources
+        .map(
+          (r) =>
+            `<item identifier="I_${r.id}" identifierref="${r.id}"><title>${escXml(r.title)}</title></item>`,
+        )
+        .join('');
+      return `<item identifier="M_${m.number}"><title>${escXml(`Chapter ${m.number}: ${m.title}`)}</title>${subItems}</item>`;
+    })
+    .join('');
+
+  const extraItems = extraResources
+    .map(
+      (r) =>
+        `<item identifier="I_${r.id}" identifierref="${r.id}"><title>${escXml(r.title)}</title></item>`,
+    )
+    .join('');
+
+  const allResources = [...modules.flatMap((m) => m.resources), ...extraResources];
+  const resourceXml = allResources
+    .map((r) => {
+      const files = r.files.map((f) => `<file href="${escXml(f)}"/>`).join('');
+      return `<resource identifier="${r.id}" type="${r.type}" href="${escXml(r.href)}">${files}</resource>`;
+    })
+    .join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="${escXml(courseId)}"
+  xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"
+  xmlns:lomimscc="http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imscp_v1p2_v1p0.xsd http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest http://www.imsglobal.org/profile/cc/ccv1p1/LOM/ccv1p1_lommanifest_v1p0.xsd">
+  <metadata>
+    <schema>IMS Common Cartridge</schema>
+    <schemaversion>1.1.0</schemaversion>
+    <lomimscc:lom>
+      <lomimscc:general>
+        <lomimscc:title><lomimscc:string>${escXml(syllabus.courseTitle)}</lomimscc:string></lomimscc:title>
+        <lomimscc:description><lomimscc:string>${escXml(syllabus.courseOverview || '')}</lomimscc:string></lomimscc:description>
+      </lomimscc:general>
+    </lomimscc:lom>
+  </metadata>
+  <organizations>
+    <organization identifier="O_1" structure="rooted-hierarchy">
+      <item identifier="LearningModules">${moduleItems}${extraItems}</item>
+    </organization>
+  </organizations>
+  <resources>${resourceXml}</resources>
+</manifest>`;
+}
+
+// ── Public API ──
+
+export interface ImsccOptions {
+  themeId?: string;
+  curriculumCsv?: string;
+}
+
+/**
+ * Bundle a generated course into a Common Cartridge 1.1 (.imscc) Blob suitable
+ * for import into Canvas LMS. Each chapter becomes a learning module containing
+ * the reading (HTML), practice quiz (QTI + interactive HTML), in-class quiz
+ * (QTI), weekly challenge (QTI MCQ subset + interactive HTML), slides (PPTX),
+ * and infographic (JPG). Audio is skipped because blob URLs are non-persistent
+ * — same constraint as the existing ZIP exporter.
+ */
+export async function assembleImscc(
+  syllabus: Syllabus,
+  chapters: GeneratedChapter[],
+  opts: ImsccOptions = {},
+): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
+  const zip = new JSZip();
+
+  const modules: ChapterModule[] = [];
+
+  for (const ch of chapters) {
+    const folder = `chapter-${ch.number}-${slug(ch.title)}`;
+    const mod: ChapterModule = { number: ch.number, title: ch.title, resources: [] };
+
+    // 1. Reading HTML
+    if (ch.htmlContent) {
+      const href = `${folder}/reading.html`;
+      zip.file(href, ch.htmlContent);
+      mod.resources.push({
+        id: `R_${ch.number}_reading`,
+        type: 'webcontent',
+        href,
+        files: [href],
+        title: `${ch.title} — Reading`,
+      });
+    }
+
+    // 2. Practice quiz — QTI for grading + rich HTML for the interactive version
+    if (ch.practiceQuizData) {
+      const mcqs = parsePracticeQuizMarkdown(ch.practiceQuizData);
+      if (mcqs.length > 0) {
+        const assessmentId = `A_${ch.number}_practice`;
+        const xmlPath = `${folder}/practice-quiz.xml`;
+        zip.file(xmlPath, qtiAssessment(assessmentId, `${ch.title} — Practice Quiz`, mcqs));
+        mod.resources.push({
+          id: `R_${ch.number}_practice_qti`,
+          type: QTI_RESOURCE_TYPE,
+          href: xmlPath,
+          files: [xmlPath],
+          title: `${ch.title} — Practice Quiz`,
+        });
+      }
+      try {
+        const { buildQuizHtml } = await import('../../templates/quizTemplate');
+        const html = buildQuizHtml(
+          `${ch.title} — Practice Quiz`,
+          ch.practiceQuizData,
+          syllabus.courseTitle,
+          opts.themeId,
+        );
+        const href = `${folder}/practice-quiz.html`;
+        zip.file(href, html);
+        mod.resources.push({
+          id: `R_${ch.number}_practice_html`,
+          type: 'webcontent',
+          href,
+          files: [href],
+          title: `${ch.title} — Practice Quiz (Interactive)`,
+        });
+      } catch {
+        /* template unavailable */
+      }
+    }
+
+    // 3. In-class quiz → QTI
+    if (ch.inClassQuizData && ch.inClassQuizData.length > 0) {
+      const mcqs = ch.inClassQuizData.map(inClassToMcq);
+      const assessmentId = `A_${ch.number}_inclass`;
+      const xmlPath = `${folder}/in-class-quiz.xml`;
+      zip.file(xmlPath, qtiAssessment(assessmentId, `${ch.title} — In-Class Quiz`, mcqs));
+      mod.resources.push({
+        id: `R_${ch.number}_inclass_qti`,
+        type: QTI_RESOURCE_TYPE,
+        href: xmlPath,
+        files: [xmlPath],
+        title: `${ch.title} — In-Class Quiz`,
+      });
+    }
+
+    // 4. Weekly challenge — QTI (MCQ subset, lossy) + rich HTML
+    if (ch.weeklyChallengeData) {
+      const mcqs = weeklyToMcqs(ch.weeklyChallengeData);
+      if (mcqs.length > 0) {
+        const assessmentId = `A_${ch.number}_challenge`;
+        const xmlPath = `${folder}/weekly-challenge.xml`;
+        zip.file(
+          xmlPath,
+          qtiAssessment(assessmentId, `Week ${ch.number} Challenge — ${ch.title}`, mcqs),
+        );
+        mod.resources.push({
+          id: `R_${ch.number}_challenge_qti`,
+          type: QTI_RESOURCE_TYPE,
+          href: xmlPath,
+          files: [xmlPath],
+          title: `Week ${ch.number} Challenge — ${ch.title}`,
+        });
+      }
+      try {
+        const { buildWeeklyChallengeHtml } = await import('../../templates/weeklyChallengeTemplate');
+        const html = buildWeeklyChallengeHtml(
+          `Week ${ch.number} Challenge — ${ch.title}`,
+          ch.weeklyChallengeData,
+          syllabus.courseTitle,
+          opts.themeId,
+        );
+        const href = `${folder}/weekly-challenge.html`;
+        zip.file(href, html);
+        mod.resources.push({
+          id: `R_${ch.number}_challenge_html`,
+          type: 'webcontent',
+          href,
+          files: [href],
+          title: `Week ${ch.number} Challenge — ${ch.title} (Interactive)`,
+        });
+      } catch {
+        /* template unavailable */
+      }
+    }
+
+    // 5. Slides PPTX (file resource — Canvas attaches as a downloadable file)
+    if (ch.slidesJson && ch.slidesJson.length > 0) {
+      try {
+        const { generatePptx } = await import('./pptxExporter');
+        const pptxBlob = await generatePptx(
+          ch.slidesJson,
+          syllabus.courseTitle,
+          ch.title,
+          opts.themeId,
+        );
+        const href = `${folder}/slides.pptx`;
+        zip.file(href, pptxBlob);
+        mod.resources.push({
+          id: `R_${ch.number}_slides`,
+          type: 'webcontent',
+          href,
+          files: [href],
+          title: `${ch.title} — Slides`,
+        });
+      } catch {
+        /* pptx generation failed */
+      }
+    }
+
+    // 6. Infographic
+    if (ch.infographicDataUri) {
+      const m = ch.infographicDataUri.match(/^data:[^;]+;base64,(.+)$/);
+      if (m) {
+        const href = `${folder}/infographic.jpg`;
+        zip.file(href, m[1], { base64: true });
+        mod.resources.push({
+          id: `R_${ch.number}_infographic`,
+          type: 'webcontent',
+          href,
+          files: [href],
+          title: `${ch.title} — Infographic`,
+        });
+      }
+    }
+
+    modules.push(mod);
+  }
+
+  const extraResources: ResourceRecord[] = [];
+  if (opts.curriculumCsv) {
+    const href = 'curriculum-alignment-matrix.csv';
+    zip.file(href, opts.curriculumCsv);
+    extraResources.push({
+      id: 'R_curriculum',
+      type: 'webcontent',
+      href,
+      files: [href],
+      title: 'Curriculum Alignment Matrix',
+    });
+  }
+
+  zip.file('imsmanifest.xml', buildManifest(syllabus, modules, extraResources));
+
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+}
