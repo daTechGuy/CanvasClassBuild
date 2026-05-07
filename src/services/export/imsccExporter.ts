@@ -177,6 +177,17 @@ interface ChapterModule {
 }
 
 const QTI_RESOURCE_TYPE = 'imsqti_xmlv1p2/imscc_xmlv1p1/assessment';
+const DISCUSSION_RESOURCE_TYPE = 'imsdt_xmlv1p1';
+
+// ── Discussion topic builder (IMS DT 1.1, CC 1.1 profile) ──
+
+function discussionTopicXml(title: string, body: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<topic xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imsdt_v1p2_v1p0.xsd">
+  <title>${escXml(title)}</title>
+  <text texttype="text/html">${escXml(body)}</text>
+</topic>`;
+}
 
 function buildManifest(
   syllabus: Syllabus,
@@ -377,7 +388,9 @@ export async function assembleImscc(
       }
     }
 
-    // 7. Teaching resources DOCX (discussions + activities, when present)
+    // 7. Teaching resources DOCX (discussions + activities, when present).
+    // Kept alongside native discussions because the DOCX also captures the
+    // step-by-step activity guides that don't have a native Canvas analogue.
     const hasTeachingContent =
       (ch.discussionData && ch.discussionData.length > 0) ||
       (ch.activityData && ch.activityData.length > 0);
@@ -399,6 +412,24 @@ export async function assembleImscc(
       } catch {
         /* docx generation failed */
       }
+    }
+
+    // 8. Discussion topics → native Canvas Discussions (one per prompt).
+    if (ch.discussionData && ch.discussionData.length > 0) {
+      ch.discussionData.forEach((d, i) => {
+        const idx = i + 1;
+        const title = `${ch.title} — Discussion ${idx}: ${d.hook}`;
+        const body = `<p><strong>[${d.hook}]</strong></p><p>${d.prompt}</p>`;
+        const href = `${folder}/discussions/disc-${idx}.xml`;
+        zip.file(href, discussionTopicXml(title, body));
+        mod.resources.push({
+          id: `R_${ch.number}_disc_${idx}`,
+          type: DISCUSSION_RESOURCE_TYPE,
+          href,
+          files: [href],
+          title,
+        });
+      });
     }
 
     modules.push(mod);
