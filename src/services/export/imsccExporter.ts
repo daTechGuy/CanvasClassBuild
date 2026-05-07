@@ -279,7 +279,11 @@ export async function assembleImscc(
       });
     }
 
-    // 2. Practice quiz — QTI for grading + rich HTML for the interactive version
+    // 2. Practice quiz → QTI only. The interactive HTML version is a single-
+    // page app and Canvas's Page sanitizer strips its scripts on import, so
+    // shipping it as a webcontent resource produces a broken page. The
+    // standalone "Publish Course" HTML viewer is the right home for the
+    // interactive UX.
     if (ch.practiceQuizData) {
       const mcqs = parsePracticeQuizMarkdown(ch.practiceQuizData);
       if (mcqs.length > 0) {
@@ -293,26 +297,6 @@ export async function assembleImscc(
           files: [xmlPath],
           title: `${ch.title} — Practice Quiz`,
         });
-      }
-      try {
-        const { buildQuizHtml } = await import('../../templates/quizTemplate');
-        const html = buildQuizHtml(
-          `${ch.title} — Practice Quiz`,
-          ch.practiceQuizData,
-          syllabus.courseTitle,
-          opts.themeId,
-        );
-        const href = `${folder}/practice-quiz.html`;
-        zip.file(href, html);
-        mod.resources.push({
-          id: `R_${ch.number}_practice_html`,
-          type: 'webcontent',
-          href,
-          files: [href],
-          title: `${ch.title} — Practice Quiz (Interactive)`,
-        });
-      } catch {
-        /* template unavailable */
       }
     }
 
@@ -331,7 +315,9 @@ export async function assembleImscc(
       });
     }
 
-    // 4. Weekly challenge — QTI (MCQ subset, lossy) + rich HTML
+    // 4. Weekly challenge → QTI only (MCQ subset; non-MCQ types are skipped).
+    // Same Canvas-Page-sanitizer constraint as the practice quiz — the rich
+    // interactive HTML version cannot survive import as a Page.
     if (ch.weeklyChallengeData) {
       const mcqs = weeklyToMcqs(ch.weeklyChallengeData);
       if (mcqs.length > 0) {
@@ -348,26 +334,6 @@ export async function assembleImscc(
           files: [xmlPath],
           title: `Week ${ch.number} Challenge — ${ch.title}`,
         });
-      }
-      try {
-        const { buildWeeklyChallengeHtml } = await import('../../templates/weeklyChallengeTemplate');
-        const html = buildWeeklyChallengeHtml(
-          `Week ${ch.number} Challenge — ${ch.title}`,
-          ch.weeklyChallengeData,
-          syllabus.courseTitle,
-          opts.themeId,
-        );
-        const href = `${folder}/weekly-challenge.html`;
-        zip.file(href, html);
-        mod.resources.push({
-          id: `R_${ch.number}_challenge_html`,
-          type: 'webcontent',
-          href,
-          files: [href],
-          title: `Week ${ch.number} Challenge — ${ch.title} (Interactive)`,
-        });
-      } catch {
-        /* template unavailable */
       }
     }
 
@@ -408,6 +374,30 @@ export async function assembleImscc(
           files: [href],
           title: `${ch.title} — Infographic`,
         });
+      }
+    }
+
+    // 7. Teaching resources DOCX (discussions + activities, when present)
+    const hasTeachingContent =
+      (ch.discussionData && ch.discussionData.length > 0) ||
+      (ch.activityData && ch.activityData.length > 0);
+    if (hasTeachingContent) {
+      try {
+        const { generateTeachingResourcesDocx } = await import('./teachingResourcesDocx');
+        const docxBlob = await generateTeachingResourcesDocx(ch, syllabus);
+        if (docxBlob) {
+          const href = `${folder}/teaching-resources.docx`;
+          zip.file(href, docxBlob);
+          mod.resources.push({
+            id: `R_${ch.number}_teaching`,
+            type: 'webcontent',
+            href,
+            files: [href],
+            title: `${ch.title} — Teaching Resources`,
+          });
+        }
+      } catch {
+        /* docx generation failed */
       }
     }
 
