@@ -510,6 +510,26 @@ export function ExportPage() {
     }
   }, [syllabus, chapters, setup.themeId, setError]);
 
+  const [isExportingImscc, setIsExportingImscc] = useState(false);
+  const handleDownloadImscc = useCallback(async () => {
+    if (!syllabus || chapters.length === 0) return;
+    setIsExportingImscc(true);
+    try {
+      const { assembleImscc } = await import('../services/export/imsccExporter');
+      const { saveAs } = await import('file-saver');
+      const blob = await assembleImscc(syllabus, chapters, {
+        themeId: setup.themeId,
+        curriculumCsv: buildCurriculumMapCsv() ?? undefined,
+      });
+      const courseName = sanitizeFilename(syllabus.courseTitle) || 'course';
+      saveAs(blob, `${courseName}.imscc`);
+    } catch (err) {
+      setError(friendlyError(err, 'Common Cartridge export failed.'));
+    } finally {
+      setIsExportingImscc(false);
+    }
+  }, [syllabus, chapters, setup.themeId, buildCurriculumMapCsv, setError]);
+
   // --- Derived data ---
 
   if (!syllabus) {
@@ -577,6 +597,19 @@ export function ExportPage() {
             {allReady
               ? `Download All (ZIP)`
               : `Download ${readyCount} of ${totalChapters} Classes (ZIP)`}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleDownloadImscc}
+            disabled={chapters.length === 0 || isExportingImscc}
+            isLoading={isExportingImscc}
+          >
+            <svg className="mr-2 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+            Export for Canvas (.imscc)
           </Button>
         </div>
       </div>
