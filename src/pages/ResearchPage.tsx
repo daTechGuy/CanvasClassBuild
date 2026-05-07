@@ -38,7 +38,7 @@ const emptyResearchState: ChapterResearchState = {
 export function ResearchPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, addResearchDossier, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey } = useApiStore();
+  const { claudeApiKey, provider } = useApiStore();
   const { setActiveTab } = useUiStore();
   const [currentChapter, setCurrentChapter] = useState(0);
   const [researchingSet, setResearchingSet] = useState<Set<number>>(new Set());
@@ -176,8 +176,10 @@ export function ResearchPage() {
     }
   }, [syllabus, claudeApiKey, addResearchDossier, updateChapterState, researchingSet, researchDossiers]);
 
-  // Auto-start first chapter research
+  // Auto-start first chapter research. Skipped on Ollama because the research
+  // step requires Claude's built-in web_search server tool.
   useEffect(() => {
+    if (provider === 'ollama') return;
     if (syllabus && researchDossiers.length === 0 && !isResearching && !researchStarted.current) {
       researchStarted.current = true;
       researchChapter(0);
@@ -232,6 +234,26 @@ export function ResearchPage() {
         <Button variant="secondary" className="mt-4" onClick={() => navigate('/syllabus')}>
           Back to Syllabus
         </Button>
+      </div>
+    );
+  }
+
+  if (provider === 'ollama') {
+    return (
+      <div className="max-w-2xl mx-auto py-20 text-center">
+        <h1 className="text-3xl font-bold mb-3">Research is Claude-only</h1>
+        <p className="text-text-secondary mb-6 leading-relaxed">
+          The research stage uses Claude's built-in web search to gather sources for each chapter. Ollama Cloud has no native web search, so this step is disabled when Ollama is the active provider.
+        </p>
+        <p className="text-text-muted text-sm mb-8">
+          You can switch providers in <strong>Setup</strong> to run research, or skip straight to chapter generation. Skipping just means chapters won't have an external research dossier — content generation still works.
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="secondary" onClick={() => navigate('/setup')}>
+            Back to Setup
+          </Button>
+          <Button onClick={handleSkip}>Skip to Build</Button>
+        </div>
       </div>
     );
   }

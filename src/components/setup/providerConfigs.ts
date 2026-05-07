@@ -1,5 +1,5 @@
 export interface ProviderConfig {
-  id: 'claude' | 'gemini';
+  id: 'claude' | 'gemini' | 'ollama';
   heading: string;
   connectedHeading: string;
   tagline: string;
@@ -79,4 +79,37 @@ export const GEMINI_CONFIG: ProviderConfig = {
     'Check that you copied the full key from AI Studio and that your Google account has API access enabled.',
 };
 
-export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, GEMINI_CONFIG] as const;
+export const OLLAMA_COST_NOTE =
+  'Pay-as-you-go on ollama.com — cheaper per-token than Claude. Quality on the rich JSON outputs (slides, weekly challenge) will be lumpier than Claude.';
+
+export const OLLAMA_CONFIG: ProviderConfig = {
+  id: 'ollama',
+  heading: 'Connect to Ollama Cloud',
+  connectedHeading: 'Connected to Ollama Cloud',
+  tagline:
+    'Open-weight alternative to Claude. Generates the same text outputs but cannot run the Research step (no built-in web search).',
+  required: false,
+  costNote: OLLAMA_COST_NOTE,
+  deepLink: 'https://ollama.com/settings/keys',
+  deepLinkLabel: 'Open Ollama Settings',
+  steps: [
+    { text: 'Sign in at ollama.com and open Settings → Keys' },
+    { text: 'Click "Create key" and copy it' },
+    { text: 'Paste it below and switch the provider toggle to Ollama' },
+  ],
+  placeholder: 'ollama-...',
+  warnings: [
+    {
+      type: 'info',
+      text: 'Defaults to gpt-oss:120b-cloud. Other cloud-only models (qwen3-coder, deepseek-v3.1) can be selected after pasting the key.',
+    },
+    {
+      type: 'info',
+      text: 'Research step is disabled on Ollama — it relies on Claude’s built-in web search. Switch to Claude for that stage if you need it.',
+    },
+  ],
+  validationFailHint:
+    'Check that you copied the full key from ollama.com/settings/keys and that your account has cloud access enabled.',
+};
+
+export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, OLLAMA_CONFIG, GEMINI_CONFIG] as const;
