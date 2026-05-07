@@ -2,18 +2,19 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useApiStore } from '../../store/apiStore';
 import { MODELS } from '../../services/claude/client';
 import { ProviderCard } from './ProviderCard';
-import { CLAUDE_CONFIG, GEMINI_CONFIG, OLLAMA_CONFIG } from './providerConfigs';
+import { CLAUDE_CONFIG, GEMINI_CONFIG, OLLAMA_CONFIG, TAVILY_CONFIG } from './providerConfigs';
 
 export function ApiKeyPanel() {
   const {
     provider,
-    claudeApiKey, geminiApiKey, ollamaApiKey, ollamaModel,
-    claudeKeyValid, geminiKeyValid, ollamaKeyValid,
-    isValidatingClaude, isValidatingGemini, isValidatingOllama,
-    setProvider,
-    setClaudeApiKey, setGeminiApiKey, setOllamaApiKey, setOllamaModel,
-    setClaudeKeyValid, setGeminiKeyValid, setOllamaKeyValid,
-    setIsValidatingClaude, setIsValidatingGemini, setIsValidatingOllama,
+    researchBackend,
+    claudeApiKey, geminiApiKey, ollamaApiKey, ollamaModel, tavilyApiKey,
+    claudeKeyValid, geminiKeyValid, ollamaKeyValid, tavilyKeyValid,
+    isValidatingClaude, isValidatingGemini, isValidatingOllama, isValidatingTavily,
+    setProvider, setResearchBackend,
+    setClaudeApiKey, setGeminiApiKey, setOllamaApiKey, setOllamaModel, setTavilyApiKey,
+    setClaudeKeyValid, setGeminiKeyValid, setOllamaKeyValid, setTavilyKeyValid,
+    setIsValidatingClaude, setIsValidatingGemini, setIsValidatingOllama, setIsValidatingTavily,
   } = useApiStore();
 
   const validateClaude = useCallback(async () => {
@@ -57,8 +58,6 @@ export function ApiKeyPanel() {
     if (!ollamaApiKey.trim()) return;
     setIsValidatingOllama(true);
     try {
-      // Hit the same /api/chat endpoint we'll use at runtime so any CORS,
-      // auth, or model-access failure surfaces here rather than mid-stream.
       const ollamaUrl = import.meta.env.DEV
         ? '/ollama-proxy/api/chat'
         : 'https://ollama.com/api/chat';
@@ -77,17 +76,44 @@ export function ApiKeyPanel() {
       setOllamaKeyValid(res.ok);
       if (!res.ok) {
         const detail = await res.text().catch(() => '');
-        // eslint-disable-next-line no-console
+         
         console.warn('Ollama validation failed', res.status, detail);
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('Ollama validation error (likely CORS or network):', err);
       setOllamaKeyValid(false);
     } finally {
       setIsValidatingOllama(false);
     }
   }, [ollamaApiKey, ollamaModel, setOllamaKeyValid, setIsValidatingOllama]);
+
+  const validateTavily = useCallback(async () => {
+    if (!tavilyApiKey.trim()) return;
+    setIsValidatingTavily(true);
+    try {
+      const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tavilyApiKey.trim()}`,
+        },
+        body: JSON.stringify({ query: 'ping', max_results: 1, search_depth: 'basic' }),
+      });
+      setTavilyKeyValid(res.ok);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+         
+        console.warn('Tavily validation failed', res.status, detail);
+      }
+    } catch (err) {
+       
+      console.warn('Tavily validation error:', err);
+      setTavilyKeyValid(false);
+    } finally {
+      setIsValidatingTavily(false);
+    }
+  }, [tavilyApiKey, setTavilyKeyValid, setIsValidatingTavily]);
 
   // Auto-validate stored keys on mount
   const mountedRef = useRef(false);
@@ -97,7 +123,15 @@ export function ApiKeyPanel() {
     if (claudeApiKey.trim() && claudeKeyValid === null) validateClaude();
     if (geminiApiKey.trim() && geminiKeyValid === null) validateGemini();
     if (ollamaApiKey.trim() && ollamaKeyValid === null) validateOllama();
+    if (tavilyApiKey.trim() && tavilyKeyValid === null) validateTavily();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const researchHint =
+    researchBackend === 'anthropic'
+      ? 'Uses Claude’s built-in web search. Requires the Claude key.'
+      : researchBackend === 'tavily'
+        ? 'Sends queries to Tavily, then synthesizes results with the active LLM. Requires the Tavily key.'
+        : 'Searches Wikipedia, then synthesizes with the active LLM. No extra key needed.';
 
   return (
     <div className="space-y-5">
@@ -146,9 +180,50 @@ export function ApiKeyPanel() {
         </div>
         <p className="text-xs text-text-muted">
           {provider === 'anthropic'
-            ? 'Claude writes syllabus, research, and chapter content. Best quality.'
-            : 'Open-weight alternative. The Research stage is disabled — switch to Claude for it.'}
+            ? 'Claude writes syllabus and chapter content. Best quality.'
+            : 'Open-weight alternative. Used for syllabus and chapter content; the research stage uses whichever backend you pick below.'}
         </p>
+      </div>
+
+      {/* Research backend segmented control */}
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium text-text-secondary">Research backend</p>
+        <div className="inline-flex rounded-lg border border-violet-500/15 bg-bg-card p-1 text-xs">
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-md transition ${
+              researchBackend === 'anthropic'
+                ? 'bg-violet-500/15 text-violet-300 font-medium'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+            onClick={() => setResearchBackend('anthropic')}
+          >
+            Claude web search
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-md transition ${
+              researchBackend === 'tavily'
+                ? 'bg-violet-500/15 text-violet-300 font-medium'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+            onClick={() => setResearchBackend('tavily')}
+          >
+            Tavily
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-md transition ${
+              researchBackend === 'wikipedia'
+                ? 'bg-violet-500/15 text-violet-300 font-medium'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+            onClick={() => setResearchBackend('wikipedia')}
+          >
+            Wikipedia
+          </button>
+        </div>
+        <p className="text-xs text-text-muted">{researchHint}</p>
       </div>
 
       <ProviderCard
@@ -158,7 +233,7 @@ export function ApiKeyPanel() {
         isValidating={isValidatingClaude}
         setKey={setClaudeApiKey}
         validate={validateClaude}
-        defaultExpanded={!claudeApiKey && provider === 'anthropic'}
+        defaultExpanded={!claudeApiKey && (provider === 'anthropic' || researchBackend === 'anthropic')}
       />
 
       <ProviderCard
@@ -186,6 +261,16 @@ export function ApiKeyPanel() {
           </p>
         </div>
       )}
+
+      <ProviderCard
+        config={TAVILY_CONFIG}
+        apiKey={tavilyApiKey}
+        keyValid={tavilyKeyValid}
+        isValidating={isValidatingTavily}
+        setKey={setTavilyApiKey}
+        validate={validateTavily}
+        defaultExpanded={!tavilyApiKey && researchBackend === 'tavily'}
+      />
 
       <ProviderCard
         config={GEMINI_CONFIG}

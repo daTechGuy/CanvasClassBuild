@@ -4,14 +4,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useCourseStore } from '../store/courseStore';
 import { useApiStore } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
-import { streamWithRetry } from '../services/claude/streaming';
-import type { WebSearchResult } from '../services/claude/streaming';
+import type { WebSearchResult } from '../services/llm/types';
+import { runResearch } from '../services/research';
 import { Button } from '../components/shared/Button';
 import type { ResearchDossier } from '../types/course';
 import { validateDois } from '../utils/doiValidator';
 import { isSafeHttpUrl } from '../utils/url';
 import { friendlyError } from '../utils/errors';
-import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt, parseResearchResponse } from '../prompts/research';
 
 type ResearchPhase = 'idle' | 'thinking' | 'searching' | 'compiling' | 'validating';
 
@@ -38,7 +37,11 @@ const emptyResearchState: ChapterResearchState = {
 export function ResearchPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, addResearchDossier, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey, provider } = useApiStore();
+  const { claudeApiKey, ollamaApiKey, tavilyApiKey, provider, researchBackend } = useApiStore();
+  // Active LLM key — used by tavily/wikipedia backends for query generation +
+  // synthesis (the anthropic backend is hardcoded to Claude regardless of the
+  // active provider, because only Claude exposes the web_search tool).
+  const llmApiKey = provider === 'ollama' ? ollamaApiKey : claudeApiKey;
   const { setActiveTab } = useUiStore();
   const [currentChapter, setCurrentChapter] = useState(0);
   const [researchingSet, setResearchingSet] = useState<Set<number>>(new Set());
@@ -66,68 +69,44 @@ export function ResearchPage() {
     setResearchingSet(prev => new Set(prev).add(chapterNum));
     updateChapterState(chapterNum, () => ({ ...emptyResearchState, phase: 'thinking' }));
 
-    // Track web results locally for fallback dossier
-    let localWebResults: WebSearchResult[] = [];
-
     try {
-      const fullText = await streamWithRetry(
+      const { dossier: rawDossier } = await runResearch(
+        researchBackend,
         {
-          apiKey: claudeApiKey,
-          system: RESEARCH_SYSTEM_PROMPT,
-          messages: [{
-            role: 'user',
-            content: buildResearchUserPrompt(chapter.title, chapter.narrative, chapter.keyConcepts),
-          }],
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          maxTokens: 16000,
+          chapterNumber: chapterNum,
+          chapterTitle: chapter.title,
+          chapterNarrative: chapter.narrative,
+          keyConcepts: chapter.keyConcepts,
+          llmApiKey,
+          claudeApiKey,
+          tavilyApiKey,
         },
-        {
-          onThinking: () => updateChapterState(chapterNum, s => ({ ...s, phase: 'thinking' })),
-          onText: (text) => updateChapterState(chapterNum, s => ({
-            ...s,
-            phase: 'compiling',
-            synthesisText: s.synthesisText + text,
-          })),
-          onWebSearch: (query) => updateChapterState(chapterNum, s => ({
-            ...s,
-            phase: 'searching',
-            searchQueries: [...s.searchQueries, query],
-          })),
-          onWebSearchResults: (results) => {
-            updateChapterState(chapterNum, s => {
-              const newResults = results.filter(
-                r => !s.webResults.some(existing => existing.url === r.url)
+        (update) => {
+          updateChapterState(chapterNum, s => {
+            let next = { ...s };
+            if (update.phase) next.phase = update.phase;
+            if (update.appendQueries?.length) {
+              next = { ...next, searchQueries: [...next.searchQueries, ...update.appendQueries] };
+            }
+            if (update.appendResults?.length) {
+              const fresh = update.appendResults.filter(
+                r => !next.webResults.some(existing => existing.url === r.url),
               );
-              localWebResults = [...s.webResults, ...newResults];
-              return {
-                ...s,
-                webResults: localWebResults,
-                latestSource: newResults.length > 0 ? newResults[newResults.length - 1] : s.latestSource,
-              };
-            });
-          },
-          onError: (err) => updateChapterState(chapterNum, s => ({ ...s, error: err.message })),
-        }
+              next = { ...next, webResults: [...next.webResults, ...fresh] };
+            }
+            if (update.appendSynthesisText) {
+              next = { ...next, synthesisText: next.synthesisText + update.appendSynthesisText };
+            }
+            if (update.setLatestSource !== undefined) {
+              next = { ...next, latestSource: update.setLatestSource };
+            }
+            return next;
+          });
+        },
       );
 
-      let dossier = parseResearchResponse(fullText, chapterNum);
-      if (!dossier) {
-        dossier = {
-          chapterNumber: chapterNum,
-          sources: localWebResults.map(r => ({
-            title: r.title,
-            authors: '',
-            year: '',
-            url: r.url,
-            summary: '',
-            relevance: '',
-            isVerified: true,
-          })),
-          synthesisNotes: fullText.slice(0, 500),
-        };
-      }
-
       // Validate DOIs before storing
+      let dossier = rawDossier;
       const doisToCheck = dossier.sources.map(s => s.doi).filter((d): d is string => !!d);
       if (doisToCheck.length > 0) {
         updateChapterState(chapterNum, s => ({ ...s, phase: 'validating' }));
@@ -135,18 +114,20 @@ export function ResearchPage() {
           const validity = await validateDois(doisToCheck);
           let validCount = 0;
           let invalidCount = 0;
-          dossier.sources = dossier.sources.map(s => {
-            if (s.doi && validity.has(s.doi)) {
-              if (validity.get(s.doi)) {
-                validCount++;
-                return s;
-              } else {
+          dossier = {
+            ...dossier,
+            sources: dossier.sources.map(s => {
+              if (s.doi && validity.has(s.doi)) {
+                if (validity.get(s.doi)) {
+                  validCount++;
+                  return s;
+                }
                 invalidCount++;
                 return { ...s, doi: undefined };
               }
-            }
-            return s;
-          });
+              return s;
+            }),
+          };
           updateChapterState(chapterNum, s => ({ ...s, doiResults: { valid: validCount, invalid: invalidCount } }));
         } catch {
           // Validation failed — keep DOIs as-is
@@ -174,12 +155,18 @@ export function ResearchPage() {
       });
       updateChapterState(chapterNum, s => ({ ...s, phase: 'idle' }));
     }
-  }, [syllabus, claudeApiKey, addResearchDossier, updateChapterState, researchingSet, researchDossiers]);
+  }, [syllabus, claudeApiKey, llmApiKey, tavilyApiKey, researchBackend, addResearchDossier, updateChapterState, researchingSet, researchDossiers]);
 
-  // Auto-start first chapter research. Skipped on Ollama because the research
-  // step requires Claude's built-in web_search server tool.
+  // Backend-aware gate: don't auto-start if the selected backend is missing
+  // its prerequisite key. The user-facing notice below will offer next steps.
+  const backendReady =
+    (researchBackend === 'anthropic' && claudeApiKey.trim() !== '') ||
+    (researchBackend === 'tavily' && tavilyApiKey.trim() !== '' && llmApiKey.trim() !== '') ||
+    (researchBackend === 'wikipedia' && llmApiKey.trim() !== '');
+
+  // Auto-start first chapter research only when the backend is ready.
   useEffect(() => {
-    if (provider === 'ollama') return;
+    if (!backendReady) return;
     if (syllabus && researchDossiers.length === 0 && !isResearching && !researchStarted.current) {
       researchStarted.current = true;
       researchChapter(0);
@@ -238,15 +225,19 @@ export function ResearchPage() {
     );
   }
 
-  if (provider === 'ollama') {
+  if (!backendReady) {
+    const reason =
+      researchBackend === 'anthropic'
+        ? 'The Claude web-search backend needs an Anthropic API key.'
+        : researchBackend === 'tavily'
+          ? 'The Tavily backend needs both a Tavily key and an LLM key (Claude or Ollama) for query generation and synthesis.'
+          : 'The Wikipedia backend needs an LLM key (Claude or Ollama) for query generation and synthesis.';
     return (
       <div className="max-w-2xl mx-auto py-20 text-center">
-        <h1 className="text-3xl font-bold mb-3">Research is Claude-only</h1>
-        <p className="text-text-secondary mb-6 leading-relaxed">
-          The research stage uses Claude's built-in web search to gather sources for each chapter. Ollama Cloud has no native web search, so this step is disabled when Ollama is the active provider.
-        </p>
+        <h1 className="text-3xl font-bold mb-3">Research backend not configured</h1>
+        <p className="text-text-secondary mb-6 leading-relaxed">{reason}</p>
         <p className="text-text-muted text-sm mb-8">
-          You can switch providers in <strong>Setup</strong> to run research, or skip straight to chapter generation. Skipping just means chapters won't have an external research dossier — content generation still works.
+          Add the missing key in <strong>Setup</strong>, switch to a different research backend, or skip the research stage. Skipping just means chapters won't have an external research dossier — content generation still works.
         </p>
         <div className="flex items-center justify-center gap-3">
           <Button variant="secondary" onClick={() => navigate('/setup')}>

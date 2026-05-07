@@ -1,5 +1,5 @@
 export interface ProviderConfig {
-  id: 'claude' | 'gemini' | 'ollama';
+  id: 'claude' | 'gemini' | 'ollama' | 'tavily';
   heading: string;
   connectedHeading: string;
   tagline: string;
@@ -112,4 +112,33 @@ export const OLLAMA_CONFIG: ProviderConfig = {
     'Check that you copied the full key from ollama.com/settings/keys and that your account has cloud access enabled.',
 };
 
-export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, OLLAMA_CONFIG, GEMINI_CONFIG] as const;
+export const TAVILY_COST_NOTE =
+  'Free tier — 1,000 searches/month. Used by the Tavily research backend to surface academic sources.';
+
+export const TAVILY_CONFIG: ProviderConfig = {
+  id: 'tavily',
+  heading: 'Connect to Tavily',
+  connectedHeading: 'Connected to Tavily',
+  tagline:
+    'Web search for the research stage. Required only when Tavily is the selected research backend.',
+  required: false,
+  costNote: TAVILY_COST_NOTE,
+  deepLink: 'https://tavily.com/',
+  deepLinkLabel: 'Open Tavily',
+  steps: [
+    { text: 'Sign up at tavily.com (free tier covers ~1,000 searches/month)' },
+    { text: 'Create an API key from the dashboard' },
+    { text: 'Paste it below and select Tavily as the research backend' },
+  ],
+  placeholder: 'tvly-...',
+  warnings: [
+    {
+      type: 'info',
+      text: 'Only needed when the research backend is set to Tavily. Wikipedia and Anthropic backends do not require this key.',
+    },
+  ],
+  validationFailHint:
+    'Check that you copied the full key from the Tavily dashboard and that you have remaining free-tier quota.',
+};
+
+export const PROVIDER_CONFIGS = [CLAUDE_CONFIG, OLLAMA_CONFIG, TAVILY_CONFIG, GEMINI_CONFIG] as const;
