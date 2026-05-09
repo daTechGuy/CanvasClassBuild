@@ -382,6 +382,7 @@ export function LandingPage() {
   const navigate = useNavigate();
   const { currentStage, reset, setup, updateSetup, setSyllabus, addChapter, completeStage, setStage } = useCourseStore();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showExamples, setShowExamples] = useState(false);
 
   const hasExistingCourse = currentStage !== 'landing' && currentStage !== 'setup';
 
@@ -478,7 +479,7 @@ export function LandingPage() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-sm mb-8">
             <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
-            Anthropic Hackathon 2026
+            For Canvas LMS
           </div>
 
           <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
@@ -522,6 +523,30 @@ export function LandingPage() {
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-violet-500/5 rounded-full blur-3xl pointer-events-none" />
       </section>
 
+      {/* ===== EXAMPLES TOGGLE ===== */}
+      <section className="py-6 border-t border-violet-500/10 text-center">
+        <button
+          type="button"
+          onClick={() => setShowExamples((v) => !v)}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-violet-500/20 hover:border-violet-500/40 text-sm text-text-secondary hover:text-text-primary transition-colors"
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${showExamples ? 'rotate-180' : ''}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          {showExamples ? 'Hide example courses' : 'Show example courses'}
+        </button>
+      </section>
+
+      {showExamples && (
+      <>
       {/* ===== PREVIEW STRIP ===== */}
       <section className="py-8 overflow-hidden">
         <style>{`
@@ -596,6 +621,8 @@ export function LandingPage() {
           ))}
         </div>
       </section>
+      </>
+      )}
 
       {/* ===== LEARNING SCIENCE DIFFERENTIATOR ===== */}
       <section id="science" className="py-20 border-t border-violet-500/10">
@@ -790,7 +817,7 @@ export function LandingPage() {
           Your API keys never leave your browser. No backend, no tracking, no accounts.
         </p>
         <p className="text-text-muted/50 text-xs">
-          CanvasClassBuild — Anthropic Hackathon, Feb 10-17, 2026
+          CanvasClassBuild — AI-assisted Canvas course builder
         </p>
       </footer>
     </div>
