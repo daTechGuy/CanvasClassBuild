@@ -7,11 +7,13 @@
   --color-bg-elevated: #252540;
   --color-bg-hover: #2a2a4a;
 
-  /* Accent - Electric Violet */
-  --color-violet-400: #a78bfa;
-  --color-violet-500: #8b5cf6;
-  --color-violet-600: #7c3aed;
-  --color-violet-700: #6d28d9;
+  /* Accent — Canvas LMS palette. Token names kept as `violet-*` to avoid a
+     codebase-wide class rename; values render as Canvas red/orange so the UI
+     visually aligns with Instructure's signature accent. */
+  --color-violet-400: #ee6c4d; /* hover / highlight */
+  --color-violet-500: #e13f2a; /* primary CTA / brand */
+  --color-violet-600: #c72a26; /* active / pressed */
+  --color-violet-700: #a92218; /* focus ring / deepest */
 
   /* Warm accent - Amber */
   --color-amber-400: #fbbf24;
