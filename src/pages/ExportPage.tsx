@@ -43,7 +43,7 @@ function sanitizeFilename(text: string): string {
 }
 
 export function ExportPage() {
-  const { syllabus, chapters, researchDossiers, addChapter, updateChapter, setup, curriculumMap } = useCourseStore();
+  const { syllabus, chapters, researchDossiers, addChapter, updateChapter, setup, curriculumMap, outlineFields } = useCourseStore();
   const { claudeApiKey } = useApiStore();
   const { isGenerating, setIsGenerating, setError, error } = useUiStore();
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
@@ -383,7 +383,13 @@ export function ExportPage() {
         const { assembleTemplateImscc } = await import(
           '../services/template/templateImsccExporter'
         );
-        const blob = await assembleTemplateImscc({ syllabus, chapters, template, templateBlob });
+        const blob = await assembleTemplateImscc({
+          syllabus,
+          chapters,
+          template,
+          templateBlob,
+          outlineFields,
+        });
         saveAs(blob, `${courseName}.imscc`);
       } else {
         const { assembleImscc } = await import('../services/export/imsccExporter');
@@ -398,7 +404,7 @@ export function ExportPage() {
     } finally {
       setIsExportingImscc(false);
     }
-  }, [syllabus, chapters, setup.themeId, setup.templateId, buildCurriculumMapCsv, setError]);
+  }, [syllabus, chapters, setup.themeId, setup.templateId, outlineFields, buildCurriculumMapCsv, setError]);
 
   // --- Derived data ---
 

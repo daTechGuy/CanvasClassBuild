@@ -5,6 +5,7 @@ import type {
   TemplateModuleItem,
   ModuleItemContentType,
 } from '../../types/template';
+import type { OutlineFields } from '../../types/outline';
 
 // ── Helpers ──
 
@@ -55,6 +56,59 @@ function discussionTopicXml(title: string, bodyHtml: string): string {
   <title>${escXml(title)}</title>
   <text texttype="text/html">${escXml(bodyHtml)}</text>
 </topic>`;
+}
+
+// ── Outline-driven content overrides ──
+
+/**
+ * Build the HTML body for course_settings/syllabus.html — what students see
+ * on Canvas's "Syllabus" tab. Composed from the outline fields, with sensible
+ * fallbacks to the syllabus's own title/overview when the outline DOCX
+ * doesn't provide a value.
+ */
+function buildSyllabusHtml(args: {
+  title: string;
+  description?: string;
+  information?: string;
+  materials?: string;
+}): string {
+  const parts: string[] = [];
+  parts.push(`<h1>${escXml(args.title)}</h1>`);
+  if (args.description) {
+    parts.push(`<p>${escXml(args.description).replace(/\n+/g, '</p><p>')}</p>`);
+  }
+  if (args.information) {
+    parts.push('<h2>Course Information</h2>');
+    parts.push(`<p>${escXml(args.information).replace(/\n+/g, '</p><p>')}</p>`);
+  }
+  if (args.materials) {
+    parts.push('<h2>Course Materials</h2>');
+    parts.push(`<p>${escXml(args.materials).replace(/\n+/g, '</p><p>')}</p>`);
+  }
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>${escXml(args.title)}</title>
+</head>
+<body>
+${parts.join('\n')}
+</body>
+</html>`;
+}
+
+/**
+ * Update the `<title>` element inside Canvas's course_settings/course_settings.xml
+ * so the imported course shows the new course title in Course Details. All
+ * other settings (storage_quota, license, etc.) pass through untouched.
+ */
+function overrideCourseSettingsTitle(originalXml: string, newTitle: string): string {
+  // Replace the first <title>...</title> at any nesting level — Canvas's
+  // course_settings.xml has it only at the root level so the regex is safe.
+  return originalXml.replace(
+    /<title>[\s\S]*?<\/title>/,
+    `<title>${escXml(newTitle)}</title>`,
+  );
 }
 
 // ── Manifest parsing ──
@@ -314,11 +368,12 @@ ${itemsXml}
 }
 
 function buildManifest(
-  syllabus: Syllabus,
+  effectiveTitle: string,
+  effectiveDescription: string,
   modules: Array<NewModule | TemplateModule>,
   allResources: Array<NewResource | ResourceRecord>,
 ): string {
-  const courseId = `canvasclassbuild-${slug(syllabus.courseTitle) || 'course'}`;
+  const courseId = `canvasclassbuild-${slug(effectiveTitle) || 'course'}`;
   const orgItems = modules.map(organizationModule).join('\n');
   const resourceXml = allResources
     .map((r) => {
@@ -339,8 +394,8 @@ function buildManifest(
     <schemaversion>1.1.0</schemaversion>
     <lomimscc:lom>
       <lomimscc:general>
-        <lomimscc:title><lomimscc:string>${escXml(syllabus.courseTitle)}</lomimscc:string></lomimscc:title>
-        <lomimscc:description><lomimscc:string>${escXml(syllabus.courseOverview || '')}</lomimscc:string></lomimscc:description>
+        <lomimscc:title><lomimscc:string>${escXml(effectiveTitle)}</lomimscc:string></lomimscc:title>
+        <lomimscc:description><lomimscc:string>${escXml(effectiveDescription)}</lomimscc:string></lomimscc:description>
       </lomimscc:general>
     </lomimscc:lom>
   </metadata>
@@ -366,15 +421,29 @@ export interface AssembleTemplateImsccInput {
   /** The original .imscc Blob the user uploaded — passes through as the
    *  starting workspace so verbatim modules / LTI / web_resources carry over. */
   templateBlob: Blob;
+  /** Course-outline fields extracted from the instructor's DOCX (Phase 3).
+   *  When present, the title/description/info/materials populate Canvas's
+   *  Syllabus tab body and the manifest LOM metadata. */
+  outlineFields?: OutlineFields | null;
 }
 
 export async function assembleTemplateImscc(
   input: AssembleTemplateImsccInput,
 ): Promise<Blob> {
-  const { syllabus, chapters, template, templateBlob } = input;
+  const { syllabus, chapters, template, templateBlob, outlineFields } = input;
 
   const { default: JSZip } = await import('jszip');
   const zip = await JSZip.loadAsync(templateBlob);
+
+  // Resolve the effective course title + description by preferring the
+  // outline DOCX fields (instructor-curated) over the AI-generated syllabus
+  // values. Both fall back gracefully when missing.
+  const effectiveTitle = (outlineFields?.courseTitle?.trim() || syllabus.courseTitle).trim();
+  const effectiveDescription = (
+    outlineFields?.courseDescription?.trim() ||
+    syllabus.courseOverview ||
+    ''
+  ).trim();
 
   // Parse the original manifest's resources so we can carry through the ones
   // referenced by verbatim modules.
@@ -438,13 +507,39 @@ export async function assembleTemplateImscc(
   // Rebuild course_settings/module_meta.xml.
   zip.file('course_settings/module_meta.xml', buildModuleMeta(orderedModules));
 
+  // Outline-driven overrides: replace syllabus.html body and update the
+  // <title> in course_settings.xml. Both are no-ops when outlineFields is
+  // null AND the syllabus carries no overview, but the syllabus.html still
+  // gets rewritten with at least the course title.
+  zip.file(
+    'course_settings/syllabus.html',
+    buildSyllabusHtml({
+      title: effectiveTitle,
+      description: effectiveDescription || undefined,
+      information: outlineFields?.courseInformation,
+      materials: outlineFields?.courseMaterials,
+    }),
+  );
+
+  const courseSettingsEntry = zip.file('course_settings/course_settings.xml');
+  if (courseSettingsEntry) {
+    const originalCs = await courseSettingsEntry.async('string');
+    zip.file(
+      'course_settings/course_settings.xml',
+      overrideCourseSettingsTitle(originalCs, effectiveTitle),
+    );
+  }
+
   // Rebuild imsmanifest.xml.
   const allModulesForManifest: Array<NewModule | TemplateModule> = orderedModules.map((x) => x.mod);
   const allResourcesForManifest: Array<NewResource | ResourceRecord> = [
     ...keptResources,
     ...newResources,
   ];
-  zip.file('imsmanifest.xml', buildManifest(syllabus, allModulesForManifest, allResourcesForManifest));
+  zip.file(
+    'imsmanifest.xml',
+    buildManifest(effectiveTitle, effectiveDescription, allModulesForManifest, allResourcesForManifest),
+  );
 
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
 }
