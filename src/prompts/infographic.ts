@@ -2,7 +2,7 @@ import { getTheme } from '../themes';
 
 export function buildInfographicMetaPrompt(themeId?: string): string {
   const t = getTheme(themeId);
-  return `You are ClassBuild, an expert at writing image generation prompts for educational infographics.
+  return `You are CanvasClassBuild, an expert at writing image generation prompts for educational infographics.
 
 Given a class title, key concepts, and a snippet of the reading content, write a single, detailed prompt for an AI image generator (Gemini) to create a beautiful educational infographic.
 

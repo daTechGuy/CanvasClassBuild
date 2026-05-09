@@ -2,7 +2,7 @@ import { getTheme } from '../themes';
 
 export function buildChapterPrompt(themeId?: string, hasGeminiImages?: boolean): string {
   const t = getTheme(themeId);
-  return `You are ClassBuild, an expert educational content creator generating complete, standalone HTML chapter documents for university courses.
+  return `You are CanvasClassBuild, an expert educational content creator generating complete, standalone HTML chapter documents for university courses.
 
 ## CRITICAL: USE THIS EXACT HTML TEMPLATE
 

@@ -3,7 +3,8 @@ import { createJSONStorage } from 'zustand/middleware';
 
 const DB_NAME = 'classbuild';
 const STORE_NAME = 'persist';
-const DB_VERSION = 1;
+const BLOB_STORE_NAME = 'blobs';
+const DB_VERSION = 2;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -12,6 +13,12 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
+      }
+      // Added in v2: stores raw binary blobs (e.g. uploaded .imscc templates)
+      // outside of the JSON-serialized persist path so they don't bloat every
+      // store write.
+      if (!db.objectStoreNames.contains(BLOB_STORE_NAME)) {
+        db.createObjectStore(BLOB_STORE_NAME);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -97,3 +104,38 @@ const idbStateStorage: StateStorage = {
 };
 
 export const idbStorage = createJSONStorage(() => idbStateStorage);
+
+// ── Raw-blob helpers (for large binary artefacts like uploaded .imscc files)
+
+export async function idbBlobPut(key: string, blob: Blob): Promise<void> {
+  const db = await getDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(BLOB_STORE_NAME);
+    const req = store.put(blob, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function idbBlobGet(key: string): Promise<Blob | null> {
+  const db = await getDb();
+  return new Promise<Blob | null>((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readonly');
+    const store = tx.objectStore(BLOB_STORE_NAME);
+    const req = store.get(key);
+    req.onsuccess = () => resolve((req.result as Blob | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function idbBlobDelete(key: string): Promise<void> {
+  const db = await getDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(BLOB_STORE_NAME);
+    const req = store.delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}

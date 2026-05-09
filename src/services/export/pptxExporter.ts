@@ -476,7 +476,7 @@ export async function generatePptx(
   const Ctor = typeof PptxGenJS === 'function' ? PptxGenJS : (PptxGenJS as any).default;
   const pptx = new Ctor();
 
-  pptx.author = 'ClassBuild';
+  pptx.author = 'CanvasClassBuild';
   pptx.title = chapterTitle;
   pptx.subject = courseTitle;
   pptx.layout = 'LAYOUT_16x9';

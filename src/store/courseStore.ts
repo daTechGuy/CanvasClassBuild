@@ -9,6 +9,7 @@ import type {
   StageId,
   CurriculumMap,
 } from '../types/course';
+import type { OutlineFields } from '../types/outline';
 
 interface CourseState {
   // Stage tracking
@@ -31,6 +32,11 @@ interface CourseState {
   // Curriculum map
   curriculumMap: CurriculumMap | null;
 
+  // Course-outline DOCX extraction (Phase 3) — populates the "Begin Here"
+  // homepage and related slots at export time.
+  outlineFields: OutlineFields | null;
+  outlineRawText: string | null;
+
   // Actions
   setStage: (stage: StageId) => void;
   completeStage: (stage: StageId) => void;
@@ -43,6 +49,8 @@ interface CourseState {
   addResearchDossier: (dossier: ResearchDossier) => void;
   addChapter: (chapter: GeneratedChapter) => void;
   updateChapter: (number: number, updates: Partial<GeneratedChapter>) => void;
+  setOutlineFields: (fields: OutlineFields | null) => void;
+  setOutlineRawText: (text: string | null) => void;
   resetDownstream: () => void;
   reset: () => void;
 }
@@ -71,6 +79,8 @@ export const useCourseStore = create<CourseState>()(
       researchDossiers: [],
       chapters: [],
       curriculumMap: null,
+      outlineFields: null,
+      outlineRawText: null,
 
       setStage: (stage) => set({ currentStage: stage }),
 
@@ -114,6 +124,9 @@ export const useCourseStore = create<CourseState>()(
           ),
         })),
 
+      setOutlineFields: (fields) => set({ outlineFields: fields }),
+      setOutlineRawText: (text) => set({ outlineRawText: text }),
+
       resetDownstream: () =>
         set({
           completedStages: [],
@@ -134,6 +147,8 @@ export const useCourseStore = create<CourseState>()(
           researchDossiers: [],
           chapters: [],
           curriculumMap: null,
+          outlineFields: null,
+          outlineRawText: null,
         }),
     }),
     {
@@ -171,6 +186,8 @@ export const useCourseStore = create<CourseState>()(
         syllabusConversation: state.syllabusConversation,
         researchDossiers: state.researchDossiers,
         curriculumMap: state.curriculumMap,
+        outlineFields: state.outlineFields,
+        outlineRawText: state.outlineRawText,
         // Persist chapters but strip blob URLs and large data URIs
         chapters: state.chapters.map((c) => ({
           ...c,

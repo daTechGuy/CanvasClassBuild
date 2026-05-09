@@ -28,6 +28,12 @@ export interface CourseSetup {
   widgetsPerChapter: number;
   themeId?: string;
   voiceId?: string;
+  /**
+   * When set, this course will mirror an uploaded Canvas .imscc template's
+   * structure. Chapter titles are constrained to `Module N: <topic>` and the
+   * template's verbatim modules / images / LTI links are preserved at export.
+   */
+  templateId?: string;
 }
 
 export type SciencePrinciple =
@@ -201,6 +207,35 @@ export interface GeneratedChapter {
   infographicDataUri?: string; // data:image/jpeg;base64,...
   infographicPrompt?: string; // the Claude-written prompt for Gemini
   weeklyChallengeData?: WeeklyChallengeData;
+  /**
+   * Canvas-template-shaped content for this chapter. Generated when the
+   * course is in template mode (setup.templateId set) — Phase 4 export uses
+   * these artifacts to populate the template's Module N slot.
+   */
+  templateContent?: TemplateChapterContent;
+}
+
+export interface TemplateInstructorNote {
+  /** Page title — locked prefix is added at export time (e.g. "M3 Instructor Notes:"). */
+  title: string;
+  /** Full HTML body for the wiki page. */
+  htmlContent: string;
+}
+
+export interface TemplateDiscussion {
+  /** Discussion title — locked prefix added at export time (e.g. "M3 Discussion:"). */
+  title: string;
+  /** HTML body for the discussion prompt. */
+  promptHtml: string;
+}
+
+export interface TemplateChapterContent {
+  /** Body for the "Module N Overview" wiki page. */
+  moduleOverviewHtml: string;
+  /** One or more "MN Instructor Notes:" pages. AI decides how many. */
+  instructorNotes: TemplateInstructorNote[];
+  /** Single "MN Discussion:" prompt per module. */
+  discussion: TemplateDiscussion;
 }
 
 export interface SlideData {

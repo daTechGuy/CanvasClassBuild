@@ -380,8 +380,9 @@ const STAGE_ROUTES: Record<StageId, string> = {
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const { currentStage, reset, setup } = useCourseStore();
+  const { currentStage, reset, setup, updateSetup, setSyllabus, addChapter, completeStage, setStage } = useCourseStore();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showExamples, setShowExamples] = useState(false);
 
   const hasExistingCourse = currentStage !== 'landing' && currentStage !== 'setup';
 
@@ -402,6 +403,17 @@ export function LandingPage() {
   const continueCurrent = () => {
     setShowConfirm(false);
     navigate(STAGE_ROUTES[currentStage]);
+  };
+
+  const handleLoadDemoCourse = async () => {
+    const { demoSetup, demoSyllabus, demoChapters } = await import('../fixtures/demoCourse');
+    reset();
+    updateSetup(demoSetup);
+    setSyllabus(demoSyllabus);
+    for (const ch of demoChapters) addChapter(ch);
+    (['setup', 'syllabus', 'research', 'build'] as StageId[]).forEach(completeStage);
+    setStage('export');
+    navigate('/export');
   };
 
   return (
@@ -467,7 +479,7 @@ export function LandingPage() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-sm mb-8">
             <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
-            Anthropic Hackathon 2026
+            For Canvas LMS
           </div>
 
           <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">
@@ -498,6 +510,12 @@ export function LandingPage() {
             }}>
               How It Works
             </Button>
+            <Button variant="ghost" size="lg" onClick={handleLoadDemoCourse}>
+              Load demo course
+            </Button>
+            <Button variant="ghost" size="lg" onClick={() => navigate('/templates')}>
+              Canvas templates
+            </Button>
           </div>
         </motion.div>
 
@@ -505,6 +523,30 @@ export function LandingPage() {
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-violet-500/5 rounded-full blur-3xl pointer-events-none" />
       </section>
 
+      {/* ===== EXAMPLES TOGGLE ===== */}
+      <section className="py-6 border-t border-violet-500/10 text-center">
+        <button
+          type="button"
+          onClick={() => setShowExamples((v) => !v)}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-violet-500/20 hover:border-violet-500/40 text-sm text-text-secondary hover:text-text-primary transition-colors"
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${showExamples ? 'rotate-180' : ''}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          {showExamples ? 'Hide example courses' : 'Show example courses'}
+        </button>
+      </section>
+
+      {showExamples && (
+      <>
       {/* ===== PREVIEW STRIP ===== */}
       <section className="py-8 overflow-hidden">
         <style>{`
@@ -557,7 +599,7 @@ export function LandingPage() {
           className="text-center mb-12"
         >
           <h2 className="text-3xl font-bold mb-4">
-            See what ClassBuild{' '}
+            See what CanvasClassBuild{' '}
             <span className="bg-gradient-to-r from-violet-400 to-amber-400 bg-clip-text text-transparent">creates</span>
           </h2>
           <p className="text-text-secondary max-w-2xl mx-auto">
@@ -579,6 +621,8 @@ export function LandingPage() {
           ))}
         </div>
       </section>
+      </>
+      )}
 
       {/* ===== LEARNING SCIENCE DIFFERENTIATOR ===== */}
       <section id="science" className="py-20 border-t border-violet-500/10">
@@ -593,7 +637,7 @@ export function LandingPage() {
             <span className="bg-gradient-to-r from-violet-400 to-amber-400 bg-clip-text text-transparent">actually learn</span>
           </h2>
           <p className="text-text-secondary max-w-2xl mx-auto">
-            These aren't buzzwords. Each principle draws on decades of cognitive science, and ClassBuild weaves all five into every chapter, quiz, and activity it generates.
+            These aren't buzzwords. Each principle draws on decades of cognitive science, and CanvasClassBuild weaves all five into every chapter, quiz, and activity it generates.
           </p>
         </motion.div>
 
@@ -730,7 +774,7 @@ export function LandingPage() {
             <div>
               <h3 className="text-base font-semibold text-text-primary mb-1">Building multiple courses?</h3>
               <p className="text-sm text-text-secondary mb-3">
-                The ClassBuild CLI can generate complete courses headlessly — ideal for creating entire programs or course catalogues.
+                The CanvasClassBuild CLI can generate complete courses headlessly — ideal for creating entire programs or course catalogues.
               </p>
               <a
                 href="https://github.com/jtangen/classbuild#cli--headless-course-generation"
@@ -773,7 +817,7 @@ export function LandingPage() {
           Your API keys never leave your browser. No backend, no tracking, no accounts.
         </p>
         <p className="text-text-muted/50 text-xs">
-          ClassBuild — Anthropic Hackathon, Feb 10-17, 2026
+          CanvasClassBuild — AI-assisted Canvas course builder
         </p>
       </footer>
     </div>

@@ -12,6 +12,7 @@ import { SyllabusTimeline } from '../components/syllabus/SyllabusTimeline';
 import { ScienceOverlay } from '../components/syllabus/ScienceOverlay';
 import { CurriculumMapPanel } from '../components/syllabus/CurriculumMapPanel';
 import { InlineFeedback } from '../components/syllabus/InlineFeedback';
+import { TemplateTitleEditor } from '../components/syllabus/TemplateTitleEditor';
 import type { ChapterSyllabus } from '../types/course';
 import { friendlyError } from '../utils/errors';
 
@@ -288,6 +289,12 @@ export function SyllabusPage() {
             Building syllabus... {partialChapters.length > 0 ? `${partialChapters.length} chapters so far` : 'parsing response'}
           </span>
         </motion.div>
+      )}
+
+      {/* Template-mode title editor — only when a Canvas template is active and
+          the syllabus has finished generating. */}
+      {setup.templateId && syllabus && (
+        <TemplateTitleEditor syllabus={syllabus} setSyllabus={setSyllabus} />
       )}
 
       {/* Timeline */}

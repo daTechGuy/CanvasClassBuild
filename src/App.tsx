@@ -7,6 +7,7 @@ import { SyllabusPage } from './pages/SyllabusPage';
 import { ResearchPage } from './pages/ResearchPage';
 import { BuildPage } from './pages/BuildPage';
 import { ExportPage } from './pages/ExportPage';
+import { TemplatePreviewPage } from './pages/TemplatePreviewPage';
 import { useCourseStore } from './store/courseStore';
 
 function App() {
@@ -38,6 +39,7 @@ function App() {
           <Route path="/research" element={<ResearchPage />} />
           <Route path="/build" element={<BuildPage />} />
           <Route path="/export" element={<ExportPage />} />
+          <Route path="/templates" element={<TemplatePreviewPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
