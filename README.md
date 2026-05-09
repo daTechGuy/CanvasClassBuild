@@ -1,165 +1,98 @@
 <!--
-  keywords: ai course generator, university course builder, ai education, learning science, quiz generator, slide generator, curriculum builder, edtech, prompt engineering, claude, anthropic
-  homepage: https://classbuild.ai
-  cli: scripts/generate-course.ts
-  llm-txt: https://classbuild.ai/llm.txt
-  repository: https://github.com/jtangen/classbuild
+  keywords: canvas lms, common cartridge, imscc export, course builder, ai course generator, instructure canvas
+  fork-of: https://github.com/jtangen/classbuild
+  repository: https://github.com/daTechGuy/CanvasClassBuild
 -->
 
-# ClassBuild
+# CanvasClassBuild
 
-**One topic in. A complete course out.** Grounded in how humans actually learn.
+**An AI-assisted Canvas course builder.** Upload a Canvas course template, describe your course, get an `.imscc` ready to import.
 
-[**Try it live at ClassBuild.ai**](https://classbuild.ai) · [LLM-readable docs](/llm.txt)
+A fork of [ClassBuild](https://github.com/jtangen/classbuild) by Jason Tangen, retargeted at instructors who need to ship Canvas-shaped courses fast.
 
-![ClassBuild — AI Course Generator](public/hero.png)
+> **⚙️ Active development on the [`imscc-export`](https://github.com/daTechGuy/CanvasClassBuild/tree/imscc-export) branch.** This `main` branch tracks upstream `jtangen/classbuild`. Switch to `imscc-export` for the Canvas template + IMSCC export work, the Ollama Cloud / Tavily / Wikipedia provider options, the course-outline DOCX parsing, and the rebrand.
+
+> **Compatible with Canvas LMS — not affiliated with Instructure, Inc.** Canvas® is a registered trademark of Instructure, Inc.
 
 ---
 
-## What is ClassBuild?
+## What CanvasClassBuild adds on top of ClassBuild
 
-Describe your subject and ClassBuild produces a full course: interactive chapters with embedded widgets, gamified quizzes with confidence calibration, PowerPoint slides with speaker notes, AI-narrated audiobooks, infographics, and a teaching pack — all woven with five evidence-based learning principles.
+| Capability | Status |
+|---|---|
+| Upload a Canvas `.imscc` template, parse the module structure, classify modules as `verbatim` / `pattern` / `example-pattern` | ✅ |
+| Generate per-chapter Canvas Module content (1× Module Overview, 1+ MN Instructor Notes, 1× MN Discussion) | ✅ |
+| Batch generation: "Generate All Canvas Modules" for the whole course at once | ✅ |
+| Export an `.imscc` that mirrors the template's structure: verbatim modules carry through untouched, pattern modules replaced by generated content, LTI links + web_resources passed through | ✅ |
+| Upload a course-outline `.docx` and have an LLM extract title / description / course information / course materials → populates Canvas's Syllabus tab body at export time | ✅ |
+| Pluggable LLM provider — **Anthropic (Claude)** or **Ollama Cloud** for course-content generation | ✅ |
+| Pluggable research backend — **Claude web search**, **Tavily**, or **Wikipedia** | ✅ |
+| Auto-publish quizzes & discussions on Canvas import (Canvas-extension sidecar XMLs) | ✅ |
+| Advanced-mode toggle — hides multimedia outputs (slides, audio, infographic, weekly challenge, activities) by default to keep the Canvas-focused happy path tight | ✅ |
 
-## What does ClassBuild produce per chapter?
-
-- Interactive HTML reading with embedded visualizations and callout boxes
-- Gamified practice quiz with confidence calibration, streaks, and achievements
-- In-class quiz (5 shuffled versions + answer keys)
-- PowerPoint slides with speaker notes
-- AI-narrated audiobook (Gemini TTS)
-- AI-generated infographic (Gemini)
-- Teaching pack: discussion starters, activities, and current events hooks
-- Weekly mastery challenge with 6 question types and SCORM 2004 for Blackboard
-- Research dossier with sources and synthesis notes
-
-## How do I install ClassBuild?
+## Install
 
 ```bash
-git clone https://github.com/jtangen/classbuild.git
-cd classbuild
+git clone https://github.com/daTechGuy/CanvasClassBuild.git
+cd CanvasClassBuild
+git switch imscc-export        # active development branch
 npm install
 npm run dev
 ```
 
-Open [localhost:5173](http://localhost:5173) and enter your API key on the Setup page.
+Open [localhost:5173](http://localhost:5173).
 
-**Bring Your Own Key** — ClassBuild runs entirely in your browser. Your API keys are never sent to any server.
+**Bring Your Own Key** — keys are entered through the Setup page and never leave your browser. There is no server-side component except a Vite dev proxy that exists solely to bypass Ollama Cloud's missing browser CORS headers.
 
-## What API keys do I need?
+## API keys
 
-| Key | Required | Purpose |
-|-----|----------|---------|
-| Anthropic Claude | Yes | Course generation (all stages) |
-| Google Gemini | No | Voice narration (TTS) and AI-generated infographics |
+| Provider | Required when… | What it does |
+|---|---|---|
+| Anthropic Claude | LLM provider = Anthropic, **OR** research backend = Claude web search | Course-content generation; Claude's built-in web search for the Research stage |
+| Ollama Cloud | LLM provider = Ollama Cloud | Course-content generation. Get a key at [ollama.com/settings/keys](https://ollama.com/settings/keys) |
+| Tavily | Research backend = Tavily | Web search for the Research stage. Free tier covers ~1,000 searches/month |
+| Google Gemini | Advanced mode + you want infographics or audiobook narration | TTS + image generation (optional) |
 
-## How does ClassBuild work?
+The Wikipedia research backend needs no key.
 
-ClassBuild is a six-stage pipeline:
+## End-to-end Canvas course flow
 
-1. **Setup** — Define your topic, audience level, chapter count, and preferences
-2. **Syllabus** — Claude designs the full course arc: chapter narratives, key concepts, and learning science annotations
-3. **Research** — Web search gathers real-world sources and examples to ground every chapter
-4. **Build** — Generate all materials live: chapters, quizzes, slides, audio, and infographics stream in real time
-5. **Export** — Download as ZIP, PowerPoint, or publish as a standalone course viewer site
+1. **Upload your Canvas course template.** Visit `/templates`, drop in an `.imscc` you exported from a previous Canvas course. The parser identifies which modules to keep verbatim (Instructor Information, Begin Here / Introductory) and which are placeholder patterns to be replaced (Module 1, Module 2, …).
+2. **Setup.** Enter the course topic and chapter count (defaults to 16 when a template is selected). Optionally upload a course-outline `.docx`; an LLM extracts the title, description, course information, and materials so they populate the Canvas Syllabus tab at export time.
+3. **Syllabus.** AI generates chapter titles in the locked `Module N: <topic>` format. Edit the topic suffix per chapter from the inline editor — the locked prefix is preserved on save.
+4. **Research.** Choose a backend. Claude web search is the highest-quality but Anthropic-only; Tavily and Wikipedia work with any LLM provider. Skippable.
+5. **Build.** For each chapter, click "Generate Canvas Module" (or batch with "Generate All Canvas Modules") to produce the Module Overview + Instructor Notes pages + Discussion. The locked `MN Instructor Notes:` / `MN Discussion:` prefixes are added at export time.
+6. **Export.** "Export for Canvas (.imscc)" produces a fresh `.imscc` containing your verbatim modules, your generated Module N modules, all original LTI links, all original `web_resources/` images, and a Syllabus tab body composed from the outline DOCX. Drop it into Canvas via Settings → Import Course Content → Common Cartridge Package.
 
-Four visual themes (Midnight, Classic, Ocean, Warm) carry through every output — chapters, quizzes, slides, and the published course viewer.
+## Inherited multimedia features (advanced mode)
 
-## How do I generate a course from the command line?
+The upstream ClassBuild also produces:
 
-The ClassBuild CLI generates complete courses from the command line — no browser required. Ideal for batch-building entire programs or course catalogues.
+- Interactive HTML reading with embedded widgets
+- Gamified practice quiz with confidence calibration
+- In-class quiz (5 shuffled versions + answer keys)
+- PowerPoint slides with speaker notes
+- AI-narrated audiobook (Gemini TTS)
+- AI-generated infographic (Gemini)
+- Weekly mastery challenge with 6 question types and SCORM 2004 wrapper
+- Discussion starters and classroom activities
 
-```bash
-ANTHROPIC_API_KEY=sk-... npx tsx scripts/generate-course.ts \
-  --topic "The Psychology of Prejudice" \
-  --chapters 12 \
-  --level advanced-undergrad \
-  --theme midnight \
-  --length comprehensive \
-  --notes "University of Queensland, Australia. Use international and Australian examples." \
-  --output ./output/prejudice
-```
+These are hidden behind the "Advanced mode" toggle on Setup so the Canvas-focused workflow stays tight. Flip it on and the Build page surfaces all the additional tabs.
 
-Set `GEMINI_API_KEY` as an environment variable to enable audio narration and infographics. Install `ffmpeg` if you want the CLI to transcode WAV output to MP3.
+## Branches
 
-## What does each CLI flag do?
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--topic` | *(required)* | Course topic |
-| `--chapters` | `12` | Number of chapters |
-| `--level` | `advanced-undergrad` | `general-public`, `professional`, `advanced-undergrad` |
-| `--theme` | `midnight` | `midnight`, `classic`, `ocean`, `warm` |
-| `--length` | `standard` | `concise`, `standard`, `comprehensive` |
-| `--widgets` | `3` | Interactive widgets per chapter |
-| `--cohort` | `60` | Expected class size |
-| `--environment` | `lecture-theatre` | `lecture-theatre`, `collaborative`, `flat-classroom`, `online-hybrid` |
-| `--notes` | — | Additional context for the AI (audience, tone, specific topics) |
-| `--voice-id` | — | Gemini TTS voice name for audiobook narration (e.g. `Kore`, `Puck`, `Charon`) |
-| `--syllabus` | — | Path to existing syllabus.json (skip regeneration) |
-| `--stop-after` | — | `syllabus` or `research` — stop early for review |
-| `--no-publish` | `false` | Skip course viewer assembly |
-| `--specific-topics` | — | Comma-separated topics to include |
-| `--avoid-topics` | — | Comma-separated topics to exclude |
-| `--textbook` | — | Reference textbook for alignment |
-| `--output` | `./output` | Output directory |
-
-See 6 example courses built with the CLI at [courses.classbuild.ai](https://courses.classbuild.ai).
-
-## How do I use ClassBuild's prompt library in my own project?
-
-ClassBuild's 11 prompt builders in `src/prompts/` can be imported directly. Each returns a system prompt and user message for the Anthropic messages API:
-
-```typescript
-import { buildSyllabusPrompt, parseSyllabusResponse } from 'classbuild/src/prompts/syllabus';
-import { buildChapterPrompt, buildChapterUserPrompt } from 'classbuild/src/prompts/chapter';
-import { buildResearchUserPrompt, RESEARCH_SYSTEM_PROMPT } from 'classbuild/src/prompts/research';
-import { buildPracticeQuizPrompt } from 'classbuild/src/prompts/practiceQuiz';
-
-// Example: generate a syllabus
-const { system, userMessage } = buildSyllabusPrompt(setup);
-const response = await anthropic.messages.create({
-  model: 'claude-sonnet-4-6',
-  system,
-  messages: [{ role: 'user', content: userMessage }],
-  max_tokens: 16000,
-});
-const syllabus = parseSyllabusResponse(response.content[0].text);
-```
-
-**Available prompt builders:**
-
-| File | Exports | Purpose |
-|------|---------|---------|
-| `syllabus.ts` | `buildSyllabusPrompt()`, `parseSyllabusResponse()` | Course architecture with learning science |
-| `chapter.ts` | `buildChapterPrompt()`, `buildChapterUserPrompt()` | Interactive HTML chapter |
-| `research.ts` | `RESEARCH_SYSTEM_PROMPT`, `buildResearchUserPrompt()` | Research dossier with web search |
-| `slides.ts` | `buildSlidesPrompt()`, `buildSlidesUserPrompt()` | PowerPoint slide content |
-| `practiceQuiz.ts` | `buildPracticeQuizPrompt()`, `buildPracticeQuizUserPrompt()` | Gamified practice quiz |
-| `inClassQuiz.ts` | `buildInClassQuizPrompt()`, `buildInClassQuizUserPrompt()` | In-class quiz (5 versions) |
-| `activities.ts` | `buildActivitiesPrompt()`, `buildActivitiesUserPrompt()` | Classroom activities |
-| `discussion.ts` | `buildDiscussionPrompt()`, `buildDiscussionUserPrompt()` | Discussion starters |
-| `audioTranscript.ts` | `buildAudioTranscriptPrompt()`, `buildAudioTranscriptUserPrompt()` | Audiobook narration |
-| `learningObjectives.ts` | — | Learning objectives (Bloom's taxonomy) |
-| `infographic.ts` | `buildInfographicMetaPrompt()`, `buildInfographicMetaUserPrompt()` | Infographic briefs |
-
-## What learning science does ClassBuild apply?
-
-These aren't buzzwords. Each principle draws on decades of cognitive science, and ClassBuild weaves all five into every chapter, quiz, and activity it generates:
-
-- **Retrieval practice** — Built-in "Think About It" prompts test recall before delivering answers; quizzes track accuracy alongside confidence
-- **Interleaving** — Related concepts are mixed across practice sets, not blocked together
-- **Dual coding** — Every concept gets both verbal and visual representation through interactive widgets, diagrams, and infographics
-- **Concrete examples** — Abstract theories are grounded in vivid, real-world cases — named people, specific studies, tangible scenarios
-- **Elaboration** — Learners connect new material to what they already know through discussion starters, thought experiments, and cross-chapter callbacks
-
-The syllabus stage annotates every chapter with the specific principles it emphasizes, so instructors can see exactly how the science is wired in.
+- **`main`** — tracks upstream `jtangen/classbuild`; the original ClassBuild course generator without Canvas-specific work.
+- **[`imscc-export`](https://github.com/daTechGuy/CanvasClassBuild/tree/imscc-export)** — active fork branch with all the CanvasClassBuild features above.
+- **[`imscc-canvas-only`](https://github.com/daTechGuy/CanvasClassBuild/tree/imscc-canvas-only)** — a curated subset of `imscc-export` containing only the Common Cartridge / IMSCC export commits, opened as [PR #2 against upstream](https://github.com/jtangen/classbuild/pull/2) so the maintainer can review just that contribution.
 
 ## Built with
 
-React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · Framer Motion · Claude Opus 4.6 / Sonnet 4.6 / Haiku 4.5 · Gemini (image generation + TTS)
+React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Sonnet 4.6 / Opus 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · Gemini
 
-Built with Claude for the [Anthropic Hackathon](https://docs.google.com/forms/d/e/1FAIpQLSdAmDqfWux_oP_E55aSaXRahq6lkSi3jBWG4PlMOmhgVUhg-w/viewform) (Feb 2026).
+## Credit
+
+Built on [ClassBuild](https://github.com/jtangen/classbuild) by Jason Tangen — the foundation of this fork. The IMSCC export, Canvas template handling, course-outline DOCX parsing, multi-provider LLM/research routing, and the rebrand are added on top, but the original learning-science engine, prompt library, and content generators are all from upstream.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — same as upstream.
