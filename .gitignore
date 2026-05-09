@@ -32,3 +32,6 @@ vision/
 # Generated course output + deploy artifacts
 output/
 deploy-courses/
+
+# Local template uploads
+*.imscc

@@ -512,6 +512,9 @@ export function LandingPage() {
             <Button variant="ghost" size="lg" onClick={handleLoadDemoCourse}>
               Load demo course
             </Button>
+            <Button variant="ghost" size="lg" onClick={() => navigate('/templates')}>
+              Canvas templates
+            </Button>
           </div>
         </motion.div>
 
