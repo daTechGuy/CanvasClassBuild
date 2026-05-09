@@ -58,6 +58,25 @@ function discussionTopicXml(title: string, bodyHtml: string): string {
 </topic>`;
 }
 
+/**
+ * Canvas-proprietary sidecar that flips imported discussion topics from
+ * `unpublished` to `active` so instructors don't have to bulk-publish after
+ * import. Bundled alongside each IMSDT topic XML.
+ */
+function topicMetaXml(topicId: string, title: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<topicMeta identifier="${escXml(topicId)}_meta" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
+  <topic_id>${escXml(topicId)}</topic_id>
+  <title>${escXml(title)}</title>
+  <type>topic</type>
+  <discussion_type>threaded</discussion_type>
+  <workflow_state>active</workflow_state>
+  <published>true</published>
+  <pinned>false</pinned>
+  <require_initial_post>false</require_initial_post>
+</topicMeta>`;
+}
+
 // ── Outline-driven content overrides ──
 
 /**
@@ -269,12 +288,14 @@ function emitChapterModule(
   const discId = genCanvasId();
   const fullDiscTitle = `M${chapter.number} Discussion: ${tc.discussion.title}`;
   const discPath = `${discId}.xml`;
+  const discMetaPath = `${discId}-meta.xml`;
   files[discPath] = discussionTopicXml(fullDiscTitle, tc.discussion.promptHtml);
+  files[discMetaPath] = topicMetaXml(discId, fullDiscTitle);
   resources.push({
     identifier: discId,
     type: DISCUSSION_RESOURCE_TYPE,
     href: discPath,
-    files: [discPath],
+    files: [discPath, discMetaPath],
   });
   items.push({
     identifier: genCanvasId(),

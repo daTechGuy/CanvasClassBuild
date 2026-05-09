@@ -189,6 +189,56 @@ function discussionTopicXml(title: string, body: string): string {
 </topic>`;
 }
 
+// ── Canvas auto-publish extensions ──
+//
+// Canvas's CC importer drops every quiz and discussion in as `unpublished` by
+// default. The instructor has to bulk-publish via Modules → ⋮ menu after
+// import. To work around that, Canvas's own exporter writes a sidecar XML
+// file alongside each quiz / discussion in the cartridge using the
+// proprietary `http://canvas.instructure.com/xsd/cccv1p0` namespace. Including
+// these sidecars with `<workflow_state>published</workflow_state>` flips the
+// imported items to published state.
+//
+// This is undocumented and may break with Canvas updates, but it's the
+// canonical workaround used by every Canvas-CC tool I've seen. If a future
+// Canvas release drops support, the cartridge still imports cleanly — just
+// reverts to the manual-publish behavior we already have.
+
+function assessmentMetaXml(
+  assessmentId: string,
+  title: string,
+  pointsPossible: number,
+): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<quiz identifier="${escXml(assessmentId)}" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
+  <title>${escXml(title)}</title>
+  <description/>
+  <quiz_type>assignment</quiz_type>
+  <points_possible>${pointsPossible.toFixed(1)}</points_possible>
+  <allowed_attempts>-1</allowed_attempts>
+  <scoring_policy>keep_highest</scoring_policy>
+  <show_correct_answers>true</show_correct_answers>
+  <published>true</published>
+  <workflow_state>published</workflow_state>
+  <module_locked>false</module_locked>
+  <assignment_overrides/>
+</quiz>`;
+}
+
+function topicMetaXml(topicId: string, title: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<topicMeta identifier="${escXml(topicId)}_meta" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
+  <topic_id>${escXml(topicId)}</topic_id>
+  <title>${escXml(title)}</title>
+  <type>topic</type>
+  <discussion_type>threaded</discussion_type>
+  <workflow_state>active</workflow_state>
+  <published>true</published>
+  <pinned>false</pinned>
+  <require_initial_post>false</require_initial_post>
+</topicMeta>`;
+}
+
 // ── Canvas course-settings extension ──
 // Canvas-proprietary; surfaces the course title and pushes the description
 // into the Syllabus tab body (which IS visible to enrolled students, unlike
@@ -342,14 +392,17 @@ export async function assembleImscc(
       const mcqs = parsePracticeQuizMarkdown(ch.practiceQuizData);
       if (mcqs.length > 0) {
         const assessmentId = `A_${ch.number}_practice`;
+        const quizTitle = `${ch.title} — Practice Quiz`;
         const xmlPath = `${folder}/practice-quiz.xml`;
-        zip.file(xmlPath, qtiAssessment(assessmentId, `${ch.title} — Practice Quiz`, mcqs));
+        const metaPath = `${folder}/practice-quiz-meta.xml`;
+        zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
+        zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
         mod.resources.push({
           id: `R_${ch.number}_practice_qti`,
           type: QTI_RESOURCE_TYPE,
           href: xmlPath,
-          files: [xmlPath],
-          title: `${ch.title} — Practice Quiz`,
+          files: [xmlPath, metaPath],
+          title: quizTitle,
         });
       }
     }
@@ -358,14 +411,17 @@ export async function assembleImscc(
     if (ch.inClassQuizData && ch.inClassQuizData.length > 0) {
       const mcqs = ch.inClassQuizData.map(inClassToMcq);
       const assessmentId = `A_${ch.number}_inclass`;
+      const quizTitle = `${ch.title} — In-Class Quiz`;
       const xmlPath = `${folder}/in-class-quiz.xml`;
-      zip.file(xmlPath, qtiAssessment(assessmentId, `${ch.title} — In-Class Quiz`, mcqs));
+      const metaPath = `${folder}/in-class-quiz-meta.xml`;
+      zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
+      zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
       mod.resources.push({
         id: `R_${ch.number}_inclass_qti`,
         type: QTI_RESOURCE_TYPE,
         href: xmlPath,
-        files: [xmlPath],
-        title: `${ch.title} — In-Class Quiz`,
+        files: [xmlPath, metaPath],
+        title: quizTitle,
       });
     }
 
@@ -376,17 +432,17 @@ export async function assembleImscc(
       const mcqs = weeklyToMcqs(ch.weeklyChallengeData);
       if (mcqs.length > 0) {
         const assessmentId = `A_${ch.number}_challenge`;
+        const quizTitle = `Week ${ch.number} Challenge — ${ch.title}`;
         const xmlPath = `${folder}/weekly-challenge.xml`;
-        zip.file(
-          xmlPath,
-          qtiAssessment(assessmentId, `Week ${ch.number} Challenge — ${ch.title}`, mcqs),
-        );
+        const metaPath = `${folder}/weekly-challenge-meta.xml`;
+        zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
+        zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
         mod.resources.push({
           id: `R_${ch.number}_challenge_qti`,
           type: QTI_RESOURCE_TYPE,
           href: xmlPath,
-          files: [xmlPath],
-          title: `Week ${ch.number} Challenge — ${ch.title}`,
+          files: [xmlPath, metaPath],
+          title: quizTitle,
         });
       }
     }
@@ -463,13 +519,16 @@ export async function assembleImscc(
         const idx = i + 1;
         const title = `${ch.title} — Discussion ${idx}: ${d.hook}`;
         const body = `<p><strong>[${d.hook}]</strong></p><p>${d.prompt}</p>`;
+        const topicId = `R_${ch.number}_disc_${idx}`;
         const href = `${folder}/discussions/disc-${idx}.xml`;
+        const metaHref = `${folder}/discussions/disc-${idx}-meta.xml`;
         zip.file(href, discussionTopicXml(title, body));
+        zip.file(metaHref, topicMetaXml(topicId, title));
         mod.resources.push({
-          id: `R_${ch.number}_disc_${idx}`,
+          id: topicId,
           type: DISCUSSION_RESOURCE_TYPE,
           href,
-          files: [href],
+          files: [href, metaHref],
           title,
         });
       });
