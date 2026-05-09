@@ -59,7 +59,7 @@ export function TemplatePreviewPage() {
         <div>
           <h1 className="text-3xl font-bold mb-2">Canvas Templates</h1>
           <p className="text-text-secondary">
-            Upload a Canvas course export (.imscc) so ClassBuild can mirror its module structure when generating new courses.
+            Upload a Canvas course export (.imscc) so CanvasClassBuild can mirror its module structure when generating new courses.
           </p>
         </div>
         <Button variant="ghost" onClick={() => navigate('/')}>← Home</Button>

@@ -423,7 +423,7 @@ export function buildCourseViewerHtml(
       ${sidebarItems}
     </div>
     <div class="sidebar-footer">
-      Built with <a href="#">ClassBuild</a>
+      Built with <a href="#">CanvasClassBuild</a>
     </div>
   </nav>
 

@@ -20,8 +20,8 @@ export function Logo({ size = 32, showText = true, className }: LogoProps) {
       </svg>
       {showText && (
         <span className="text-xl font-bold tracking-tight">
-          <span className="text-slate-100">Class</span>
-          <span className="text-violet-400">Build</span>
+          <span className="text-violet-400">Canvas</span>
+          <span className="text-slate-100">ClassBuild</span>
         </span>
       )}
     </div>

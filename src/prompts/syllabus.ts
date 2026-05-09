@@ -19,7 +19,7 @@ export function buildSyllabusPrompt(
   const wordCount = setup.chapterLength === 'concise' ? '2,000' : setup.chapterLength === 'standard' ? '4,000' : '6,000';
   const readTime = setup.chapterLength === 'concise' ? '10' : setup.chapterLength === 'standard' ? '20' : '30';
 
-  const systemPrompt = `You are ClassBuild, an expert course architect that designs pedagogically-principled university courses. You combine deep subject matter expertise with decades of evidence-based learning science research.
+  const systemPrompt = `You are CanvasClassBuild, an expert course architect that designs pedagogically-principled university courses. You combine deep subject matter expertise with decades of evidence-based learning science research.
 
 You are designing a course that will be used to generate complete chapter content, interactive widgets, practice quizzes, in-class quizzes, discussion questions, activity suggestions, audiobook narrations, and presentation slides. The syllabus you create is the architectural blueprint for ALL of these downstream outputs, so it must be extraordinarily well-designed.
 

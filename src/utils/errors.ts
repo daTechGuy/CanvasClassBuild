@@ -51,7 +51,7 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
   // chunk whose hash no longer exists, so the dynamic import fails with
   // "Failed to fetch dynamically imported module" or a MIME-type error.
   if (/dynamically imported module|mime type of "text\/html"|module script/i.test(message)) {
-    return 'ClassBuild was updated while this tab was open. Refresh the page (Cmd/Ctrl+Shift+R) and retry.';
+    return 'CanvasClassBuild was updated while this tab was open. Refresh the page (Cmd/Ctrl+Shift+R) and retry.';
   }
 
   // Network

@@ -4,7 +4,7 @@
  * - `verbatim` — bundle into the export untouched. Used for the Instructor
  *   Information module and the Begin Here / Introductory module.
  * - `pattern` — empty placeholder shape (e.g. the template's "Module 1:") that
- *   ClassBuild should replicate one-per-chapter, replacing it with generated
+ *   CanvasClassBuild should replicate one-per-chapter, replacing it with generated
  *   content.
  * - `example-pattern` — same structural shape as `pattern` but with content
  *   already filled in (e.g. the template's "Module 2: Data Visualization").
@@ -30,9 +30,9 @@ export interface TemplateModuleItem {
   identifier: string;
   contentType: ModuleItemContentType;
   title: string;
-  /** Title prefix that the instructor (and ClassBuild) must keep intact. */
+  /** Title prefix that the instructor (and CanvasClassBuild) must keep intact. */
   titleLockedPrefix?: string;
-  /** The editable portion the instructor / ClassBuild fills in. */
+  /** The editable portion the instructor / CanvasClassBuild fills in. */
   titleEditableSuffix?: string;
   /** When the title carries an `**EDIT**` / `**EDIT OR REMOVE**` marker. */
   editMarker?: EditMarker;

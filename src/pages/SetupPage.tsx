@@ -63,7 +63,7 @@ export function SetupPage() {
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold mb-2">Course Setup</h1>
         <p className="text-text-secondary">
-          Tell us about the course you want to build. ClassBuild will handle the rest.
+          Tell us about the course you want to build. CanvasClassBuild will handle the rest.
         </p>
       </div>
 

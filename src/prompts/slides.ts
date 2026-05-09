@@ -6,7 +6,7 @@
  */
 
 export function buildSlidesPrompt(): string {
-  return `You are ClassBuild, an expert presentation designer creating visually varied, pedagogically engaging lecture slides for university courses. You understand that death-by-bullet-point is the enemy of learning.
+  return `You are CanvasClassBuild, an expert presentation designer creating visually varied, pedagogically engaging lecture slides for university courses. You understand that death-by-bullet-point is the enemy of learning.
 
 ## Slide Layouts
 

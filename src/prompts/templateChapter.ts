@@ -20,7 +20,7 @@ export function buildTemplateChapterPrompt({
         ? '~1,500–2,200'
         : '~1,000–1,500';
 
-  const systemPrompt = `You are ClassBuild generating Canvas course module content for a single chapter. The output must populate three Canvas-shaped artifacts that an instructor will import as a Common Cartridge: a Module Overview wiki page, one or more Instructor Notes wiki pages, and a single Discussion prompt.
+  const systemPrompt = `You are CanvasClassBuild generating Canvas course module content for a single chapter. The output must populate three Canvas-shaped artifacts that an instructor will import as a Common Cartridge: a Module Overview wiki page, one or more Instructor Notes wiki pages, and a single Discussion prompt.
 
 ## Output format
 

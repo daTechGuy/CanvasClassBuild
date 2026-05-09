@@ -574,7 +574,7 @@ export function LandingPage() {
           className="text-center mb-12"
         >
           <h2 className="text-3xl font-bold mb-4">
-            See what ClassBuild{' '}
+            See what CanvasClassBuild{' '}
             <span className="bg-gradient-to-r from-violet-400 to-amber-400 bg-clip-text text-transparent">creates</span>
           </h2>
           <p className="text-text-secondary max-w-2xl mx-auto">
@@ -610,7 +610,7 @@ export function LandingPage() {
             <span className="bg-gradient-to-r from-violet-400 to-amber-400 bg-clip-text text-transparent">actually learn</span>
           </h2>
           <p className="text-text-secondary max-w-2xl mx-auto">
-            These aren't buzzwords. Each principle draws on decades of cognitive science, and ClassBuild weaves all five into every chapter, quiz, and activity it generates.
+            These aren't buzzwords. Each principle draws on decades of cognitive science, and CanvasClassBuild weaves all five into every chapter, quiz, and activity it generates.
           </p>
         </motion.div>
 
@@ -747,7 +747,7 @@ export function LandingPage() {
             <div>
               <h3 className="text-base font-semibold text-text-primary mb-1">Building multiple courses?</h3>
               <p className="text-sm text-text-secondary mb-3">
-                The ClassBuild CLI can generate complete courses headlessly — ideal for creating entire programs or course catalogues.
+                The CanvasClassBuild CLI can generate complete courses headlessly — ideal for creating entire programs or course catalogues.
               </p>
               <a
                 href="https://github.com/jtangen/classbuild#cli--headless-course-generation"
@@ -790,7 +790,7 @@ export function LandingPage() {
           Your API keys never leave your browser. No backend, no tracking, no accounts.
         </p>
         <p className="text-text-muted/50 text-xs">
-          ClassBuild — Anthropic Hackathon, Feb 10-17, 2026
+          CanvasClassBuild — Anthropic Hackathon, Feb 10-17, 2026
         </p>
       </footer>
     </div>

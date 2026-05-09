@@ -146,7 +146,7 @@ export function ApiKeyPanel() {
         <div>
           <p className="text-xs font-medium text-emerald-400 mb-0.5">Your keys never leave your computer</p>
           <p className="text-xs text-text-muted leading-relaxed">
-            ClassBuild has no server and no accounts. Everything happens right here in your browser — we never see, store, or have access to your keys.
+            CanvasClassBuild has no server and no accounts. Everything happens right here in your browser — we never see, store, or have access to your keys.
           </p>
         </div>
       </div>
