@@ -62,7 +62,7 @@ async function replaceGeminiPlaceholders(html: string, apiKey: string): Promise<
 export function BuildPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setup, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey, geminiApiKey } = useApiStore();
+  const { claudeApiKey, geminiApiKey, advancedMode } = useApiStore();
   const { isGenerating, setIsGenerating, streamingText, setStreamingText, appendStreamingText, error, setError, activeTab, setActiveTab, batchGenerating, batchCurrentChapter, batchPhase, batchMaterial, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial } = useUiStore();
 
   const [selectedChapterNum, setSelectedChapterNum] = useState(1);
@@ -1413,12 +1413,21 @@ export function BuildPage() {
     { id: 'chapter', label: 'Reading', ready: !!chapterHtml },
     { id: 'quiz', label: 'Practice Quiz', ready: !!quizHtml },
     { id: 'inclassquiz', label: 'In-Class Quiz', ready: inClassQuizData.length > 0 },
-    { id: 'weeklychallenge', label: 'Weekly Challenge', ready: !!weeklyChallengeHtml },
     { id: 'discussion', label: 'Discussion', ready: discussions.length > 0 },
-    { id: 'activities', label: 'Activities', ready: activities.length > 0 },
-    { id: 'audio', label: 'Audiobook', ready: !!audioTranscript },
-    { id: 'slides', label: 'Slides', ready: slidesData.length > 0 },
-    ...(geminiApiKey ? [{ id: 'infographic', label: 'Infographic', ready: !!infographicDataUri }] : []),
+    // Advanced-only artifacts. Hidden by default to keep the Canvas-focused
+    // surface tight; instructors who want multimedia can flip the toggle on
+    // the Setup page.
+    ...(advancedMode
+      ? [
+          { id: 'weeklychallenge', label: 'Weekly Challenge', ready: !!weeklyChallengeHtml },
+          { id: 'activities', label: 'Activities', ready: activities.length > 0 },
+          { id: 'audio', label: 'Audiobook', ready: !!audioTranscript },
+          { id: 'slides', label: 'Slides', ready: slidesData.length > 0 },
+        ]
+      : []),
+    ...(advancedMode && geminiApiKey
+      ? [{ id: 'infographic', label: 'Infographic', ready: !!infographicDataUri }]
+      : []),
   ];
 
   return (

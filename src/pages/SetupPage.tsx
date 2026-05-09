@@ -40,7 +40,7 @@ const ENVIRONMENT_LABELS: Record<string, string> = {
 export function SetupPage() {
   const navigate = useNavigate();
   const { setup, setStage, completeStage, resetDownstream } = useCourseStore();
-  const { claudeApiKey, claudeKeyValid, geminiKeyValid, geminiApiKey } = useApiStore();
+  const { claudeApiKey, claudeKeyValid, geminiKeyValid, geminiApiKey, advancedMode, setAdvancedMode } = useApiStore();
 
   const hasTopic = setup.topic.trim().length > 10;
   const hasApiKey = claudeApiKey.trim().length > 0;
@@ -108,15 +108,17 @@ export function SetupPage() {
           <ChapterConfig />
         </motion.section>
 
-        {/* Section 4: Style */}
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="bg-bg-card border border-violet-500/10 rounded-xl p-6"
-        >
-          <StyleSelector />
-        </motion.section>
+        {/* Section 4: Style — advanced only */}
+        {advancedMode && (
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="bg-bg-card border border-violet-500/10 rounded-xl p-6"
+          >
+            <StyleSelector />
+          </motion.section>
+        )}
 
         {/* Section 5: API Keys */}
         <motion.section
@@ -158,12 +160,14 @@ export function SetupPage() {
                 {setup.teachingEnvironment ? ` · ${ENVIRONMENT_LABELS[setup.teachingEnvironment] ?? setup.teachingEnvironment}` : ''}
               </span>
             </div>
-            <div className="flex gap-2">
-              <span className="text-text-muted shrink-0">Style:</span>
-              <span className="text-text-secondary">
-                {getTheme(setup.themeId).name} theme · {VOICE_OPTIONS.find(v => v.id === setup.voiceId)?.label ?? 'Default'} voice
-              </span>
-            </div>
+            {advancedMode && (
+              <div className="flex gap-2">
+                <span className="text-text-muted shrink-0">Style:</span>
+                <span className="text-text-secondary">
+                  {getTheme(setup.themeId).name} theme · {VOICE_OPTIONS.find(v => v.id === setup.voiceId)?.label ?? 'Default'} voice
+                </span>
+              </div>
+            )}
             <div className="flex gap-2">
               <span className="text-text-muted shrink-0">Services:</span>
               <span className="text-text-secondary flex items-center gap-1.5 flex-wrap">
@@ -209,6 +213,29 @@ export function SetupPage() {
             </p>
           )}
         </motion.div>
+
+        {/* Advanced mode toggle — opt-in to multimedia outputs (audio, slides,
+            infographic, weekly challenge, activities) and per-course style
+            options. Defaults off so the surface stays Canvas-focused. */}
+        <div className="flex items-center justify-between text-xs text-text-muted px-2">
+          <span>
+            <strong className="text-text-secondary">Advanced mode</strong> {advancedMode ? 'on' : 'off'} —{' '}
+            {advancedMode
+              ? 'audio, slides, infographic, weekly challenge, activities, and theme/voice are visible.'
+              : 'showing the Canvas-focused outputs only (Reading, Quizzes, Discussion).'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAdvancedMode(!advancedMode)}
+            className={`px-3 py-1 rounded-full border transition-colors ${
+              advancedMode
+                ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
+                : 'border-violet-500/15 hover:border-violet-500/30'
+            }`}
+          >
+            {advancedMode ? 'Disable' : 'Enable'} advanced
+          </button>
+        </div>
       </div>
     </motion.div>
   );

@@ -7,6 +7,8 @@ import type { ResearchBackend } from '../services/research/types';
 interface ApiState {
   provider: LlmProvider;
   researchBackend: ResearchBackend;
+  /** When true, surfaces optional artifacts (audio, slides, infographic, weekly challenge, activities) that aren't part of the Canvas-focused happy path. */
+  advancedMode: boolean;
 
   claudeApiKey: string;
   geminiApiKey: string;
@@ -26,6 +28,7 @@ interface ApiState {
 
   setProvider: (p: LlmProvider) => void;
   setResearchBackend: (b: ResearchBackend) => void;
+  setAdvancedMode: (v: boolean) => void;
   setClaudeApiKey: (key: string) => void;
   setGeminiApiKey: (key: string) => void;
   setOllamaApiKey: (key: string) => void;
@@ -46,6 +49,7 @@ export const useApiStore = create<ApiState>()(
     (set) => ({
       provider: 'anthropic',
       researchBackend: 'anthropic',
+      advancedMode: false,
       claudeApiKey: '',
       geminiApiKey: '',
       ollamaApiKey: '',
@@ -62,6 +66,7 @@ export const useApiStore = create<ApiState>()(
 
       setProvider: (p) => set({ provider: p }),
       setResearchBackend: (b) => set({ researchBackend: b }),
+      setAdvancedMode: (v) => set({ advancedMode: v }),
       setClaudeApiKey: (key) => set({ claudeApiKey: key, claudeKeyValid: null }),
       setGeminiApiKey: (key) => set({ geminiApiKey: key, geminiKeyValid: null }),
       setOllamaApiKey: (key) => set({ ollamaApiKey: key, ollamaKeyValid: null }),
@@ -81,6 +86,7 @@ export const useApiStore = create<ApiState>()(
       partialize: (state) => ({
         provider: state.provider,
         researchBackend: state.researchBackend,
+        advancedMode: state.advancedMode,
         claudeApiKey: state.claudeApiKey,
         geminiApiKey: state.geminiApiKey,
         ollamaApiKey: state.ollamaApiKey,
