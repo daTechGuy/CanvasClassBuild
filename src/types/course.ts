@@ -28,6 +28,12 @@ export interface CourseSetup {
   widgetsPerChapter: number;
   themeId?: string;
   voiceId?: string;
+  /**
+   * When set, this course will mirror an uploaded Canvas .imscc template's
+   * structure. Chapter titles are constrained to `Module N: <topic>` and the
+   * template's verbatim modules / images / LTI links are preserved at export.
+   */
+  templateId?: string;
 }
 
 export type SciencePrinciple =

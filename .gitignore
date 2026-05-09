@@ -35,3 +35,4 @@ deploy-courses/
 
 # Local template uploads
 *.imscc
+*.docx

@@ -72,7 +72,19 @@ You MUST respond with ONLY valid JSON (no markdown code fences, no commentary be
 
 ## Critical Requirements
 
-- **Chapter titles**: Evocative and specific. "The Replication Crisis" not "Chapter 8: Research Methods Issues". "When Intuition Fails" not "Chapter 3: Cognitive Biases". The title should make someone curious.
+- **Chapter titles**: Evocative and specific. "The Replication Crisis" not "Chapter 8: Research Methods Issues". "When Intuition Fails" not "Chapter 3: Cognitive Biases". The title should make someone curious.${setup.templateId
+    ? `
+
+## Canvas Template Mode
+
+This course is constrained to a Canvas course template. **You MUST format every chapter title as \`Module N: <descriptive topic>\`** — the \`Module N:\` prefix (with the chapter number and a colon) is REQUIRED for Canvas import compatibility. Examples:
+
+- \`Module 1: The Replication Crisis\`
+- \`Module 2: When Intuition Fails\`
+- \`Module 3: Statistical Inference and Confidence\`
+
+The descriptive part after the colon should still be evocative and specific (per the chapter-titles rule above) — only the \`Module N:\` prefix is locked. Do NOT use \`Chapter N:\` or any other prefix variation.`
+    : ''}
 - **Narratives**: Rich, detailed, written with genuine enthusiasm for the subject. Show how each chapter fits the course story arc. Narratives are ARCHITECTURAL — they describe what students will explore, why it matters, and how the chapter connects to the course arc. They should NAME examples ("Google PageRank, bridge vibrations, population ecology") but NEVER work through them. NEVER include calculations, formulas, worked problems, numerical examples, or pseudo-code in chapter descriptions. Those belong in the generated chapters themselves, not in the syllabus.
 - **Science annotations**: MINIMUM 3 per chapter, covering different principles. Later chapters should have MORE annotations as spacing and interleaving connections accumulate.
 - **Spacing connections**: spacingConnections array should list chapter numbers that THIS chapter revisits/builds on. Chapter 1 has none; by Chapter 8+, there should be 2-4 connections back to earlier chapters.
