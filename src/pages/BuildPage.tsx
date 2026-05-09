@@ -94,6 +94,7 @@ export function BuildPage() {
   const [generatingInfographic, setGeneratingInfographic] = useState<number | null>(null);
   const [weeklyChallengeHtml, setWeeklyChallengeHtml] = useState('');
   const [generatingWeeklyChallenge, setGeneratingWeeklyChallenge] = useState<number | null>(null);
+  const [generatingTemplateContent, setGeneratingTemplateContent] = useState<number | null>(null);
   const [tabErrors, setTabErrors] = useState<Record<string, string>>({});
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -132,7 +133,7 @@ export function BuildPage() {
   // Derived state
   const currentChapter = chapters.find(c => c.number === selectedChapterNum);
   const syllabusChapter = syllabus?.chapters.find(c => c.number === selectedChapterNum);
-  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingInfographic || generatingWeeklyChallenge);
+  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingInfographic || generatingWeeklyChallenge || generatingTemplateContent);
   const anyBusy = isGenerating || anyLocalGenerating || batchGenerating;
 
   const tabGenerating: Record<string, boolean> = {
@@ -144,6 +145,7 @@ export function BuildPage() {
     slides: generatingSlides === selectedChapterNum,
     infographic: generatingInfographic === selectedChapterNum,
     weeklychallenge: generatingWeeklyChallenge === selectedChapterNum,
+    'template-module': generatingTemplateContent === selectedChapterNum,
   };
 
   const setTabError = useCallback((tab: string, msg: string) => {
@@ -678,6 +680,29 @@ export function BuildPage() {
       setGeneratingActivities(null);
     }
   }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes, updateChapter, setTabError, clearTabError]);
+
+  const generateTemplateContent = useCallback(async () => {
+    if (!syllabus || !syllabusChapter) return;
+    const capturedChapter = selectedChapterNum;
+    setGeneratingTemplateContent(capturedChapter);
+    clearTabError('template-module');
+
+    try {
+      const { generateTemplateChapter } = await import('../services/template/generateChapter');
+      const { content } = await generateTemplateChapter({
+        apiKey: claudeApiKey,
+        setup,
+        chapter: syllabusChapter,
+        courseTitle: syllabus.courseTitle,
+        courseOverview: syllabus.courseOverview,
+      });
+      updateChapter(capturedChapter, { templateContent: content });
+    } catch (err) {
+      setTabError('template-module', friendlyError(err, 'Canvas module generation failed.'));
+    } finally {
+      setGeneratingTemplateContent(null);
+    }
+  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, updateChapter, setTabError, clearTabError]);
 
   const fleshOutActivity = useCallback(async (index: number) => {
     if (!syllabusChapter || expandingActivity !== null) return;
@@ -1380,7 +1405,11 @@ export function BuildPage() {
   const generatedCount = chapters.length;
   const overallProgress = totalChapters > 0 ? (generatedCount / totalChapters) * 100 : 0;
 
+  const templateContent = currentChapter?.templateContent;
   const tabs = [
+    ...(setup.templateId
+      ? [{ id: 'template-module', label: 'Canvas Module', ready: !!templateContent }]
+      : []),
     { id: 'chapter', label: 'Reading', ready: !!chapterHtml },
     { id: 'quiz', label: 'Practice Quiz', ready: !!quizHtml },
     { id: 'inclassquiz', label: 'In-Class Quiz', ready: inClassQuizData.length > 0 },
@@ -2833,6 +2862,118 @@ export function BuildPage() {
                             </Button>
                           </>
                         )}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {activeTab === 'template-module' && (
+                  <motion.div
+                    key="template-module"
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
+                      <div>
+                        <p className="text-xs text-text-muted">
+                          Canvas module — Module {selectedChapterNum} Overview, {templateContent ? `${templateContent.instructorNotes.length} Instructor Notes page${templateContent.instructorNotes.length === 1 ? '' : 's'}` : '1+ Instructor Notes pages'}, 1 Discussion
+                        </p>
+                        <p className="text-[11px] text-text-muted/80 mt-0.5">
+                          The locked <code className="text-violet-300">M{selectedChapterNum} Instructor Notes:</code> / <code className="text-violet-300">M{selectedChapterNum} Discussion:</code> prefixes are added at export time.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={templateContent ? 'secondary' : 'primary'}
+                        onClick={generateTemplateContent}
+                        disabled={!currentChapter || !!generatingTemplateContent || !syllabusChapter}
+                        isLoading={generatingTemplateContent === selectedChapterNum}
+                      >
+                        {templateContent ? 'Regenerate' : 'Generate Canvas Module'}
+                      </Button>
+                    </div>
+
+                    {generatingTemplateContent === selectedChapterNum && !templateContent && (
+                      <div className="p-6 flex items-center gap-3">
+                        <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
+                        <span className="text-text-secondary text-sm">
+                          Generating Canvas module content for Class {selectedChapterNum}... {formatElapsed(elapsedSec)}
+                        </span>
+                      </div>
+                    )}
+
+                    {templateContent && (
+                      <div className="p-5 space-y-6">
+                        <section>
+                          <h3 className="text-sm font-medium text-text-primary mb-2">
+                            <span className="text-violet-300 font-mono">Module {selectedChapterNum} Overview</span>
+                          </h3>
+                          <div
+                            className="prose prose-sm prose-invert max-w-none rounded-lg border border-violet-500/10 bg-bg-base p-4 text-sm"
+                            dangerouslySetInnerHTML={{ __html: templateContent.moduleOverviewHtml }}
+                          />
+                        </section>
+
+                        <section>
+                          <h3 className="text-sm font-medium text-text-primary mb-2">
+                            Instructor Notes ({templateContent.instructorNotes.length} page{templateContent.instructorNotes.length === 1 ? '' : 's'})
+                          </h3>
+                          <div className="space-y-3">
+                            {templateContent.instructorNotes.map((note, i) => (
+                              <details
+                                key={i}
+                                className="rounded-lg border border-violet-500/10 bg-bg-base"
+                                open={i === 0}
+                              >
+                                <summary className="cursor-pointer px-4 py-2.5 text-sm">
+                                  <span className="text-violet-300 font-mono">M{selectedChapterNum} Instructor Notes:</span>{' '}
+                                  <span className="text-text-primary">{note.title}</span>
+                                </summary>
+                                <div
+                                  className="prose prose-sm prose-invert max-w-none px-4 pb-4 pt-2 text-sm"
+                                  dangerouslySetInnerHTML={{ __html: note.htmlContent }}
+                                />
+                              </details>
+                            ))}
+                          </div>
+                        </section>
+
+                        <section>
+                          <h3 className="text-sm font-medium text-text-primary mb-2">Discussion</h3>
+                          <div className="rounded-lg border border-violet-500/10 bg-bg-base p-4">
+                            <p className="text-sm mb-2">
+                              <span className="text-violet-300 font-mono">M{selectedChapterNum} Discussion:</span>{' '}
+                              <span className="text-text-primary font-medium">{templateContent.discussion.title}</span>
+                            </p>
+                            <div
+                              className="prose prose-sm prose-invert max-w-none text-sm"
+                              dangerouslySetInnerHTML={{ __html: templateContent.discussion.promptHtml }}
+                            />
+                          </div>
+                        </section>
+                      </div>
+                    )}
+
+                    {!templateContent && generatingTemplateContent !== selectedChapterNum && (
+                      <div className="p-12 text-center">
+                        <div className="w-12 h-12 rounded-lg bg-violet-500/10 flex items-center justify-center mx-auto mb-4">
+                          <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                            <polyline points="10 9 9 9 8 9" />
+                          </svg>
+                        </div>
+                        <p className="text-text-secondary mb-1">Canvas Module Content</p>
+                        <p className="text-text-muted text-xs mb-4">
+                          1 Module Overview · 1+ Instructor Notes pages · 1 Discussion
+                        </p>
+                        <Button onClick={generateTemplateContent} disabled={!currentChapter || !!generatingTemplateContent}>
+                          Generate Canvas Module
+                        </Button>
                       </div>
                     )}
                   </motion.div>
