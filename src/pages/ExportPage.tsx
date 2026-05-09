@@ -364,20 +364,41 @@ export function ExportPage() {
     if (!syllabus || chapters.length === 0) return;
     setIsExportingImscc(true);
     try {
-      const { assembleImscc } = await import('../services/export/imsccExporter');
       const { saveAs } = await import('file-saver');
-      const blob = await assembleImscc(syllabus, chapters, {
-        themeId: setup.themeId,
-        curriculumCsv: buildCurriculumMapCsv() ?? undefined,
-      });
       const courseName = sanitizeFilename(syllabus.courseTitle) || 'course';
-      saveAs(blob, `${courseName}.imscc`);
+
+      // When a Canvas template is active, build the cartridge on top of the
+      // template's existing structure so verbatim modules (Instructor Info,
+      // Begin Here, LTI links, web_resources) carry through untouched.
+      if (setup.templateId) {
+        const { useTemplateStore } = await import('../store/templateStore');
+        const tplState = useTemplateStore.getState();
+        const template = tplState.templates.find((t) => t.id === setup.templateId);
+        const templateBlob = template ? await tplState.getTemplateBlob(template.id) : null;
+        if (!template || !templateBlob) {
+          throw new Error(
+            'Selected template is missing its source .imscc — re-upload the template on the Canvas Templates page.',
+          );
+        }
+        const { assembleTemplateImscc } = await import(
+          '../services/template/templateImsccExporter'
+        );
+        const blob = await assembleTemplateImscc({ syllabus, chapters, template, templateBlob });
+        saveAs(blob, `${courseName}.imscc`);
+      } else {
+        const { assembleImscc } = await import('../services/export/imsccExporter');
+        const blob = await assembleImscc(syllabus, chapters, {
+          themeId: setup.themeId,
+          curriculumCsv: buildCurriculumMapCsv() ?? undefined,
+        });
+        saveAs(blob, `${courseName}.imscc`);
+      }
     } catch (err) {
       setError(friendlyError(err, 'Common Cartridge export failed.'));
     } finally {
       setIsExportingImscc(false);
     }
-  }, [syllabus, chapters, setup.themeId, buildCurriculumMapCsv, setError]);
+  }, [syllabus, chapters, setup.themeId, setup.templateId, buildCurriculumMapCsv, setError]);
 
   // --- Derived data ---
 
