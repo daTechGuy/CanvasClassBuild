@@ -170,8 +170,17 @@ function TemplatePreview({ template }: { template: Template }) {
                   <span className="text-sm font-medium text-text-primary">
                     {m.titleLockedPrefix ? (
                       <>
-                        <span className="text-violet-300">{m.titleLockedPrefix}</span>{' '}
-                        <span className="text-text-secondary">{m.titleEditableSuffix || <em className="text-text-muted">(empty)</em>}</span>
+                        <span className="text-violet-300">{m.titleLockedPrefix}</span>
+                        {m.titleEditableSuffix === undefined ? null : (
+                          <>
+                            {' '}
+                            <span className="text-text-secondary">
+                              {m.titleEditableSuffix === ''
+                                ? <em className="text-text-muted">(awaiting topic)</em>
+                                : m.titleEditableSuffix}
+                            </span>
+                          </>
+                        )}
                       </>
                     ) : (
                       m.title
@@ -195,8 +204,17 @@ function TemplatePreview({ template }: { template: Template }) {
                       <span className="flex-1">
                         {it.titleLockedPrefix ? (
                           <>
-                            <span className="text-violet-300">{it.titleLockedPrefix}</span>{' '}
-                            <span>{it.titleEditableSuffix || <em className="text-text-muted">(empty)</em>}</span>
+                            <span className="text-violet-300">{it.titleLockedPrefix}</span>
+                            {it.titleEditableSuffix === undefined ? null : (
+                              <>
+                                {' '}
+                                <span>
+                                  {it.titleEditableSuffix === ''
+                                    ? <em className="text-text-muted">(awaiting topic)</em>
+                                    : it.titleEditableSuffix}
+                                </span>
+                              </>
+                            )}
                           </>
                         ) : (
                           it.title

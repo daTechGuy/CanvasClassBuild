@@ -12,16 +12,30 @@ import type {
 
 // ── Title-prefix patterns that lock the prefix and let the instructor edit
 //    only the suffix. Order matters: longer / more-specific patterns first.
+//    `hasEditableSuffix` distinguishes "fully locked" (Module N Overview) from
+//    "editable suffix slot present" (M1 Discussion: <topic>). The two render
+//    differently in the preview: the former shows just the prefix, the latter
+//    shows "(awaiting topic)" until filled.
 
-const ITEM_PREFIX_PATTERNS: Array<{ prefix: RegExp; capture: RegExp }> = [
-  { prefix: /^(M\d+\s+Instructor\s+Notes:)\s*/i, capture: /^(M\d+\s+Instructor\s+Notes:)\s*(.*)$/i },
-  { prefix: /^(M\d+\s+Discussion:)\s*/i, capture: /^(M\d+\s+Discussion:)\s*(.*)$/i },
-  { prefix: /^(Module\s+\d+\s+Overview)$/i, capture: /^(Module\s+\d+\s+Overview)$/i },
+const ITEM_PREFIX_PATTERNS: Array<{ capture: RegExp; hasEditableSuffix: boolean }> = [
+  { capture: /^(M\d+\s+Instructor\s+Notes:)\s*(.*)$/i, hasEditableSuffix: true },
+  { capture: /^(M\d+\s+Discussion:)\s*(.*)$/i, hasEditableSuffix: true },
+  { capture: /^(Module\s+\d+\s+Overview)$/i, hasEditableSuffix: false },
 ];
 
 const MODULE_PREFIX_PATTERN = /^(Module\s+\d+:)\s*(.*)$/i;
 
 const EDIT_MARKER_PATTERN = /\*\*\s*(EDIT(?:\s+OR\s+REMOVE)?)\s*\*\*/i;
+
+// Suffixes like "(Example to Edit)" / "(Example to edit)" tag an item as a
+// demo placeholder rather than real authored content.
+const PLACEHOLDER_SUFFIX_MARKER = /\(Example\s+to\s+Edit\)/i;
+
+function isPlaceholderSuffix(suffix: string | undefined): boolean {
+  if (suffix === undefined) return true;
+  if (suffix.trim() === '') return true;
+  return PLACEHOLDER_SUFFIX_MARKER.test(suffix);
+}
 
 // ── Verbatim-module detection.
 //    Any module whose title matches one of these is bundled untouched.
@@ -36,30 +50,30 @@ function classifyModule(title: string, items: TemplateModuleItem[]): ModuleClass
     return 'verbatim';
   }
   // A module that uses the locked "Module N:" prefix is a pattern. Distinguish
-  // a placeholder pattern (mostly empty) from an example-pattern (items with
-  // descriptive suffixes that imply real content).
+  // a placeholder pattern (suffixes empty or "(Example to Edit)") from an
+  // example-pattern (suffixes carry real authored content).
   if (MODULE_PREFIX_PATTERN.test(title)) {
-    const filledSuffixCount = items.filter((it) => {
-      // An item has descriptive content if its title has a non-empty editable
-      // suffix and it's not a sub-header.
+    const filledCount = items.filter((it) => {
       if (it.contentType === 'ContextModuleSubHeader') return false;
-      const suffix = it.titleEditableSuffix?.trim();
-      return suffix !== undefined && suffix.length > 0;
+      // Items with no editable suffix slot at all (e.g. "Module N Overview")
+      // tell us nothing about whether the module has been filled in.
+      if (it.titleEditableSuffix === undefined) return false;
+      return !isPlaceholderSuffix(it.titleEditableSuffix);
     }).length;
-    return filledSuffixCount >= 2 ? 'example-pattern' : 'pattern';
+    return filledCount >= 2 ? 'example-pattern' : 'pattern';
   }
   // Default: treat as verbatim (we don't know how to replicate it).
   return 'verbatim';
 }
 
 function detectItemPrefix(title: string): { lockedPrefix?: string; editableSuffix?: string } {
-  for (const { capture } of ITEM_PREFIX_PATTERNS) {
+  for (const { capture, hasEditableSuffix } of ITEM_PREFIX_PATTERNS) {
     const m = title.match(capture);
     if (m) {
       const lockedPrefix = m[1];
-      // The "Module N Overview" pattern has no editable portion; capture group
-      // 2 will be undefined.
-      const editableSuffix = (m[2] ?? '').trim();
+      // For "fully locked" patterns (Module N Overview), editableSuffix stays
+      // undefined so the UI knows there is no slot to fill.
+      const editableSuffix = hasEditableSuffix ? (m[2] ?? '').trim() : undefined;
       return { lockedPrefix, editableSuffix };
     }
   }
