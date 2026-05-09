@@ -75,6 +75,12 @@ export interface TemplateCourseSettings {
 export interface Template {
   /** Stable id assigned at upload time. */
   id: string;
+  /**
+   * Version of the parser that produced this metadata. Bumped whenever the
+   * classifier or prefix detection changes; older stored templates are
+   * automatically re-parsed from their persisted Blob on next hydration.
+   */
+  parserVersion: number;
   /** Display name — filename minus extension. */
   name: string;
   uploadedAt: string;

@@ -194,6 +194,16 @@ function isImagePath(path: string): boolean {
   return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+/**
+ * Bump on any change to classification, prefix detection, or surfaced fields.
+ * Stored templates with a lower version are auto-reparsed from their Blob.
+ *
+ * v1 — initial parser
+ * v2 — recognize "(Example to Edit)" as placeholder; distinguish fully-locked
+ *      titles (undefined editableSuffix) from empty editable slots ('')
+ */
+export const PARSER_VERSION = 2;
+
 export interface ParseTemplateInput {
   file: File | Blob;
   /** Display name, typically the upload filename minus extension. */
@@ -238,6 +248,7 @@ export async function parseImsccTemplate(input: ParseTemplateInput): Promise<Tem
   const id = `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   return {
     id,
+    parserVersion: PARSER_VERSION,
     name: input.name,
     uploadedAt: new Date().toISOString(),
     fileSizeBytes: input.file instanceof Blob ? input.file.size : 0,
