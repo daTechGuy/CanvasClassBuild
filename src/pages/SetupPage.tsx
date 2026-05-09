@@ -5,6 +5,7 @@ import { useApiStore } from '../store/apiStore';
 import { getTheme, VOICE_OPTIONS } from '../themes';
 import { TopicInput } from '../components/setup/TopicInput';
 import { TemplatePicker } from '../components/setup/TemplatePicker';
+import { CourseOutlineUpload } from '../components/setup/CourseOutlineUpload';
 import { AudienceSelector } from '../components/setup/AudienceSelector';
 import { ChapterConfig } from '../components/setup/ChapterConfig';
 import { StyleSelector } from '../components/setup/StyleSelector';
@@ -86,6 +87,16 @@ export function SetupPage() {
           className="bg-bg-card border border-violet-500/10 rounded-xl p-6"
         >
           <TemplatePicker />
+        </motion.section>
+
+        {/* Section 2b: Course outline DOCX (optional) */}
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.18 }}
+          className="bg-bg-card border border-violet-500/10 rounded-xl p-6"
+        >
+          <CourseOutlineUpload />
         </motion.section>
 
         {/* Section 3: Your Class */}
