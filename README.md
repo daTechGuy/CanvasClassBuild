@@ -1,7 +1,7 @@
 <!--
   keywords: canvas lms, common cartridge, imscc export, course builder, ai course generator, instructure canvas
   fork-of: https://github.com/jtangen/classbuild
-  repository: https://github.com/daTechGuy/classbuild
+  repository: https://github.com/daTechGuy/CanvasClassBuild
 -->
 
 # CanvasClassBuild
@@ -30,8 +30,8 @@ A fork of [ClassBuild](https://github.com/jtangen/classbuild) by Jason Tangen, r
 ## Install
 
 ```bash
-git clone https://github.com/daTechGuy/classbuild.git
-cd classbuild
+git clone https://github.com/daTechGuy/CanvasClassBuild.git
+cd CanvasClassBuild
 npm install
 npm run dev
 ```
