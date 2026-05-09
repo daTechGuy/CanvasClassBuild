@@ -704,6 +704,51 @@ export function BuildPage() {
     }
   }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, updateChapter, setTabError, clearTabError]);
 
+  const generateAllCanvasModules = useCallback(async () => {
+    if (!syllabus) return;
+    setBatchGenerating(true);
+    setBatchMaterial('Canvas module');
+    batchCancelRef.current = false;
+
+    try {
+      const pending = syllabus.chapters.filter((ch) => {
+        const generated = chapters.find((c) => c.number === ch.number);
+        return !generated?.templateContent;
+      });
+
+      const { generateTemplateChapter } = await import('../services/template/generateChapter');
+
+      for (const ch of pending) {
+        if (batchCancelRef.current) break;
+        setBatchCurrentChapter(ch.number);
+        setBatchPhase('thinking');
+        try {
+          const { content } = await generateTemplateChapter({
+            apiKey: claudeApiKey,
+            setup,
+            chapter: ch,
+            courseTitle: syllabus.courseTitle,
+            courseOverview: syllabus.courseOverview,
+            onText: () => setBatchPhase('writing'),
+          });
+          updateChapter(ch.number, { templateContent: content });
+        } catch (err) {
+          setError(
+            friendlyError(err, `Canvas module generation failed for Class ${ch.number}.`),
+          );
+          // Move on to the next chapter rather than aborting the batch — one
+          // bad chapter shouldn't block the rest.
+        }
+      }
+    } finally {
+      batchCancelRef.current = false;
+      setBatchCurrentChapter(null);
+      setBatchPhase(null);
+      setBatchMaterial(null);
+      setBatchGenerating(false);
+    }
+  }, [syllabus, chapters, claudeApiKey, setup, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+
   const fleshOutActivity = useCallback(async (index: number) => {
     if (!syllabusChapter || expandingActivity !== null) return;
     const activity = activities[index];
@@ -1462,6 +1507,22 @@ export function BuildPage() {
               {generatedCount > 0 ? 'Generate Remaining Classes' : 'Generate All Classes'}
             </Button>
           )}
+          {!batchGenerating && setup.templateId && chapters.length > 0 && (() => {
+            const missing = chapters.filter((c) => !c.templateContent).length;
+            if (missing === 0) return null;
+            return (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={generateAllCanvasModules}
+                disabled={anyBusy}
+              >
+                {missing === chapters.length
+                  ? 'Generate All Canvas Modules'
+                  : `Generate ${missing} Remaining Canvas ${missing === 1 ? 'Module' : 'Modules'}`}
+              </Button>
+            );
+          })()}
           {batchGenerating && (
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-2 text-xs text-violet-400">
