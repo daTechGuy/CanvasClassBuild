@@ -10,6 +10,7 @@ import type {
   ChapterSyllabus,
   TemplateChapterContent,
 } from '../../types/course';
+import type { TemplateExamplePatternContent } from '../../types/template';
 
 export interface GenerateTemplateChapterInput {
   apiKey: string;
@@ -17,6 +18,8 @@ export interface GenerateTemplateChapterInput {
   chapter: ChapterSyllabus;
   courseTitle: string;
   courseOverview: string;
+  /** Few-shot exemplar from the template's example-pattern module. */
+  examplePatternContent?: TemplateExamplePatternContent;
   onText?: (text: string) => void;
   onError?: (err: Error) => void;
 }
@@ -34,13 +37,14 @@ export interface GenerateTemplateChapterResult {
 export async function generateTemplateChapter(
   input: GenerateTemplateChapterInput,
 ): Promise<GenerateTemplateChapterResult> {
-  const { apiKey, setup, chapter, courseTitle, courseOverview, onText, onError } = input;
+  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, onText, onError } = input;
 
   const { systemPrompt, userMessage } = buildTemplateChapterPrompt({
     setup,
     chapter,
     courseTitle,
     courseOverview,
+    examplePatternContent,
   });
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userMessage }];

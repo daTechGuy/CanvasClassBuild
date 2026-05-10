@@ -5,10 +5,13 @@ import type {
   TemplateImage,
   TemplateLtiResource,
   TemplateCourseSettings,
+  TemplateExamplePatternContent,
+  TemplateExampleNote,
   ModuleClassification,
   ModuleItemContentType,
   EditMarker,
 } from '../../types/template';
+import type JSZip from 'jszip';
 
 // ── Title-prefix patterns that lock the prefix and let the instructor edit
 //    only the suffix. Order matters: longer / more-specific patterns first.
@@ -201,8 +204,114 @@ function isImagePath(path: string): boolean {
  * v1 — initial parser
  * v2 — recognize "(Example to Edit)" as placeholder; distinguish fully-locked
  *      titles (undefined editableSuffix) from empty editable slots ('')
+ * v3 — extract examplePatternContent (wiki bodies + discussion text from
+ *      the first example-pattern module) for prompt few-shot
  */
-export const PARSER_VERSION = 2;
+export const PARSER_VERSION = 3;
+
+// ── Few-shot extraction (example-pattern module content) ──
+
+/**
+ * Walk imsmanifest.xml's <resource> list and build a map from each resource
+ * identifier to the file path it points at. Used to resolve item.identifierRef
+ * when extracting example-pattern wiki bodies and discussion topics.
+ */
+function parseManifestResourceMap(manifestText: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!manifestText) return map;
+  try {
+    const doc = new DOMParser().parseFromString(manifestText, 'text/xml');
+    for (const el of Array.from(doc.getElementsByTagName('resource'))) {
+      const id = el.getAttribute('identifier');
+      const href = el.getAttribute('href');
+      if (id && href) map.set(id, href);
+    }
+  } catch {
+    /* fall through */
+  }
+  return map;
+}
+
+function extractWikiBody(html: string): string {
+  // Strip the surrounding <html><head>...</head><body>...</body></html>
+  // wrapper that Canvas writes around every wiki page. Falls back to the
+  // raw input if the wrapper isn't present.
+  const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  return m ? m[1].trim() : html.trim();
+}
+
+function extractDiscussionText(xml: string): { title: string; bodyHtml: string } | null {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const titleEl = doc.getElementsByTagName('title')[0];
+    const textEl = doc.getElementsByTagName('text')[0];
+    const title = titleEl?.textContent?.trim() ?? '';
+    // <text texttype="text/html"> wraps HTML that's already entity-escaped
+    // when stored in the IMSDT XML — textContent gives us the un-escaped
+    // HTML body directly.
+    const bodyHtml = textEl?.textContent?.trim() ?? '';
+    if (!title && !bodyHtml) return null;
+    return { title, bodyHtml };
+  } catch {
+    return null;
+  }
+}
+
+async function extractExamplePatternContent(
+  zip: JSZip,
+  modules: TemplateModule[],
+  resourceHref: Map<string, string>,
+): Promise<TemplateExamplePatternContent | undefined> {
+  const example = modules.find((m) => m.classification === 'example-pattern');
+  if (!example) return undefined;
+
+  let moduleOverviewHtml: string | undefined;
+  const instructorNotes: TemplateExampleNote[] = [];
+  let discussion: TemplateExamplePatternContent['discussion'];
+
+  for (const item of example.items) {
+    if (item.contentType === 'ContextModuleSubHeader') continue;
+    if (!item.identifierRef) continue;
+    const path = resourceHref.get(item.identifierRef);
+    if (!path) continue;
+    const entry = zip.file(path);
+    if (!entry) continue;
+
+    if (item.contentType === 'WikiPage') {
+      const html = await entry.async('string');
+      const body = extractWikiBody(html);
+      if (!body) continue;
+
+      // "Module N Overview" → moduleOverviewHtml.
+      // "MN Instructor Notes: <suffix>" → instructorNotes[].
+      // Anything else is captured as a note as a fallback.
+      if (/^Module\s+\d+\s+Overview$/i.test(item.title)) {
+        moduleOverviewHtml = body;
+      } else {
+        const noteTitle = (item.titleEditableSuffix?.trim() || item.title).trim();
+        instructorNotes.push({ title: noteTitle, htmlContent: body });
+      }
+    } else if (item.contentType === 'DiscussionTopic') {
+      const xml = await entry.async('string');
+      const parsed = extractDiscussionText(xml);
+      if (parsed) {
+        discussion = {
+          title: (item.titleEditableSuffix?.trim() || parsed.title).trim(),
+          promptHtml: parsed.bodyHtml,
+        };
+      }
+    }
+  }
+
+  if (!moduleOverviewHtml && instructorNotes.length === 0 && !discussion) return undefined;
+
+  return {
+    sourceModuleTitle: example.title,
+    moduleOverviewHtml,
+    instructorNotes,
+    discussion,
+  };
+}
 
 export interface ParseTemplateInput {
   file: File | Blob;
@@ -217,6 +326,10 @@ export async function parseImsccTemplate(input: ParseTemplateInput): Promise<Tem
   const moduleMetaFile = zip.file('course_settings/module_meta.xml');
   const moduleMetaText = moduleMetaFile ? await moduleMetaFile.async('string') : '';
   const modules = moduleMetaText ? parseModuleMeta(moduleMetaText) : [];
+
+  const manifestFile = zip.file('imsmanifest.xml');
+  const manifestText = manifestFile ? await manifestFile.async('string') : '';
+  const resourceHref = parseManifestResourceMap(manifestText);
 
   const courseSettingsFile = zip.file('course_settings/course_settings.xml');
   const courseSettingsText = courseSettingsFile ? await courseSettingsFile.async('string') : '';
@@ -245,6 +358,12 @@ export async function parseImsccTemplate(input: ParseTemplateInput): Promise<Tem
     }
   }
 
+  const examplePatternContent = await extractExamplePatternContent(
+    zip,
+    modules,
+    resourceHref,
+  );
+
   const id = `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   return {
     id,
@@ -257,5 +376,6 @@ export async function parseImsccTemplate(input: ParseTemplateInput): Promise<Tem
     ltiResources,
     courseSettings,
     totalFiles,
+    examplePatternContent,
   };
 }

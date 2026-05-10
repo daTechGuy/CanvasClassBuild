@@ -72,6 +72,36 @@ export interface TemplateCourseSettings {
   syllabusHtmlPathInZip?: string;
 }
 
+export interface TemplateExampleNote {
+  /** Title minus the locked prefix (e.g. "What is Data Visualization?"). */
+  title: string;
+  /** Wiki body innerHTML — the actual instructional content. */
+  htmlContent: string;
+}
+
+export interface TemplateExampleDiscussion {
+  /** Title minus the locked prefix. */
+  title: string;
+  /** Discussion prompt body, HTML. */
+  promptHtml: string;
+}
+
+/**
+ * Content extracted from the template's example-pattern module — used as a
+ * few-shot exemplar in the Canvas Module generation prompt so generated
+ * chapters mirror the template's tone, depth, and section structure.
+ */
+export interface TemplateExamplePatternContent {
+  /** Source module title (e.g. "Module 2: Data Visualization") for prompt context. */
+  sourceModuleTitle: string;
+  /** Body of the "Module N Overview" wiki page. */
+  moduleOverviewHtml?: string;
+  /** Each "MN Instructor Notes:" wiki page's title + body. */
+  instructorNotes: TemplateExampleNote[];
+  /** Optional — some example modules (e.g. with 3rd-party LTI assignments) have no discussion. */
+  discussion?: TemplateExampleDiscussion;
+}
+
 export interface Template {
   /** Stable id assigned at upload time. */
   id: string;
@@ -91,4 +121,10 @@ export interface Template {
   courseSettings: TemplateCourseSettings;
   /** Total file count in the source zip (for the preview pane). */
   totalFiles: number;
+  /**
+   * Few-shot exemplar pulled from the first example-pattern module (e.g.
+   * Module 2 in the test template). Embedded in the Canvas Module
+   * generation prompt to anchor tone/depth/section structure.
+   */
+  examplePatternContent?: TemplateExamplePatternContent;
 }

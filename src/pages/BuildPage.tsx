@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useCourseStore } from '../store/courseStore';
 import { useApiStore } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
+import { useTemplateStore } from '../store/templateStore';
 import { streamMessage, streamWithRetry } from '../services/claude/streaming';
 import { MODELS } from '../services/claude/client';
 import { buildChapterPrompt, buildChapterUserPrompt } from '../prompts/chapter';
@@ -63,6 +64,9 @@ export function BuildPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setup, setStage, completeStage } = useCourseStore();
   const { claudeApiKey, geminiApiKey, advancedMode } = useApiStore();
+  const { templates } = useTemplateStore();
+  const activeTemplate = setup.templateId ? templates.find((t) => t.id === setup.templateId) : undefined;
+  const examplePatternContent = activeTemplate?.examplePatternContent;
   const { isGenerating, setIsGenerating, streamingText, setStreamingText, appendStreamingText, error, setError, activeTab, setActiveTab, batchGenerating, batchCurrentChapter, batchPhase, batchMaterial, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial } = useUiStore();
 
   const [selectedChapterNum, setSelectedChapterNum] = useState(1);
@@ -695,6 +699,7 @@ export function BuildPage() {
         chapter: syllabusChapter,
         courseTitle: syllabus.courseTitle,
         courseOverview: syllabus.courseOverview,
+        examplePatternContent,
       });
       updateChapter(capturedChapter, { templateContent: content });
     } catch (err) {
@@ -702,7 +707,7 @@ export function BuildPage() {
     } finally {
       setGeneratingTemplateContent(null);
     }
-  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, updateChapter, setTabError, clearTabError]);
+  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, examplePatternContent, updateChapter, setTabError, clearTabError]);
 
   const generateAllCanvasModules = useCallback(async () => {
     if (!syllabus) return;
@@ -729,6 +734,7 @@ export function BuildPage() {
             chapter: ch,
             courseTitle: syllabus.courseTitle,
             courseOverview: syllabus.courseOverview,
+            examplePatternContent,
             onText: () => setBatchPhase('writing'),
           });
           updateChapter(ch.number, { templateContent: content });
@@ -747,7 +753,7 @@ export function BuildPage() {
       setBatchMaterial(null);
       setBatchGenerating(false);
     }
-  }, [syllabus, chapters, claudeApiKey, setup, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+  }, [syllabus, chapters, claudeApiKey, setup, examplePatternContent, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
 
   const fleshOutActivity = useCallback(async (index: number) => {
     if (!syllabusChapter || expandingActivity !== null) return;

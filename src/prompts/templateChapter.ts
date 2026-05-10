@@ -1,10 +1,53 @@
 import type { CourseSetup, ChapterSyllabus, TemplateChapterContent } from '../types/course';
+import type { TemplateExamplePatternContent } from '../types/template';
 
 export interface BuildTemplateChapterPromptInput {
   setup: CourseSetup;
   chapter: ChapterSyllabus;
   courseTitle: string;
   courseOverview: string;
+  /**
+   * Optional few-shot exemplar pulled from the template's example-pattern
+   * module. When provided, embedded in the user message so the model can
+   * mirror the example's tone, depth, and section structure.
+   */
+  examplePatternContent?: TemplateExamplePatternContent;
+}
+
+/**
+ * Trim a snippet to a per-section character cap so the few-shot doesn't
+ * blow the prompt budget on long source modules. Keeps the head of the HTML
+ * (where the most representative content lives — opening paragraphs,
+ * headings, structure) and elides the rest.
+ */
+function trimForFewShot(html: string, maxChars: number): string {
+  if (!html) return '';
+  const trimmed = html.length > maxChars ? `${html.slice(0, maxChars)}\n…` : html;
+  return trimmed;
+}
+
+function renderFewShot(example: TemplateExamplePatternContent): string {
+  const parts: string[] = [];
+  parts.push(
+    `## Example to mimic (from "${example.sourceModuleTitle}" in the template)\n\nMatch the **tone, depth, sectioning, and use of headings/lists/tables** demonstrated below. Do NOT copy or paraphrase the subject matter — generate fresh content for the requested chapter. The example is purely a stylistic anchor.`,
+  );
+  if (example.moduleOverviewHtml) {
+    parts.push(
+      `### Example Module Overview\n\n${trimForFewShot(example.moduleOverviewHtml, 2000)}`,
+    );
+  }
+  if (example.instructorNotes.length > 0) {
+    parts.push(`### Example Instructor Notes pages (${example.instructorNotes.length})\n`);
+    example.instructorNotes.forEach((note, i) => {
+      parts.push(`#### ${i + 1}. ${note.title}\n\n${trimForFewShot(note.htmlContent, 2500)}`);
+    });
+  }
+  if (example.discussion) {
+    parts.push(
+      `### Example Discussion prompt: ${example.discussion.title}\n\n${trimForFewShot(example.discussion.promptHtml, 1500)}`,
+    );
+  }
+  return parts.join('\n\n');
 }
 
 export function buildTemplateChapterPrompt({
@@ -12,6 +55,7 @@ export function buildTemplateChapterPrompt({
   chapter,
   courseTitle,
   courseOverview,
+  examplePatternContent,
 }: BuildTemplateChapterPromptInput): { systemPrompt: string; userMessage: string } {
   const wordTarget =
     setup.chapterLength === 'concise'
@@ -52,9 +96,11 @@ Respond with ONLY valid JSON (no markdown code fences, no preamble, no commentar
 
 Output ONLY the JSON.`;
 
+  const fewShot = examplePatternContent ? `\n\n${renderFewShot(examplePatternContent)}\n` : '';
+
   const userMessage = `Course: "${courseTitle}"
 Course overview: ${courseOverview}
-
+${fewShot}
 Generate the Canvas module content for this chapter:
 
 **Module ${chapter.number}**: ${chapter.title}
