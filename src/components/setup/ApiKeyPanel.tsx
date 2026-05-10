@@ -58,10 +58,9 @@ export function ApiKeyPanel() {
     if (!ollamaApiKey.trim()) return;
     setIsValidatingOllama(true);
     try {
-      const ollamaUrl = import.meta.env.DEV
-        ? '/ollama-proxy/api/chat'
-        : 'https://ollama.com/api/chat';
-      const res = await fetch(ollamaUrl, {
+      // Same proxy URL the runtime uses — vite.config.ts forwards it in
+      // dev, api/ollama-proxy.ts forwards it in prod.
+      const res = await fetch('/api/ollama-proxy', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

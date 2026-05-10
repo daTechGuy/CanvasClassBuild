@@ -75,6 +75,16 @@ The upstream ClassBuild also produces:
 
 These are hidden behind the "Advanced mode" toggle on Setup so the Canvas-focused workflow stays tight. Flip it on and the Build page surfaces all the additional tabs.
 
+## Deploying to production
+
+The app is a static SPA, so any static host works. The one wrinkle is **Ollama Cloud requires a serverless proxy**: ollama.com doesn't set CORS headers, so direct browser fetches are blocked. A Vercel Edge function ships with the repo at [`api/ollama-proxy.ts`](api/ollama-proxy.ts) — Vercel picks it up automatically. Other hosts:
+
+- **Vercel** — `vercel deploy`. The Edge function and the SPA rewrite in `vercel.json` come along for free.
+- **Cloudflare Pages** — port `api/ollama-proxy.ts` to a Workers function (same logic, different runtime API).
+- **Static-only host** (Netlify static, GitHub Pages, S3) — Ollama selection won't work; users must pick Anthropic.
+
+The browser always calls `/api/ollama-proxy` regardless of provider — the Vite dev server forwards in development, the Vercel function forwards in production.
+
 ## CLI (upstream, not yet adapted for templates)
 
 The original ClassBuild CLI at `scripts/generate-course.ts` still works for the non-template flow:

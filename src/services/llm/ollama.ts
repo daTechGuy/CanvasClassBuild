@@ -1,12 +1,11 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { StreamCallbacks, StreamOptions } from './types';
 
-// In dev, route through Vite's proxy because ollama.com doesn't set CORS
-// headers. In prod (no proxy), the direct URL will fail with the same CORS
-// error — production deployments need a real server-side proxy.
-const OLLAMA_CLOUD_URL = import.meta.env.DEV
-  ? '/ollama-proxy/api/chat'
-  : 'https://ollama.com/api/chat';
+// Same-origin proxy URL. ollama.com doesn't set CORS headers, so direct
+// browser fetches are blocked. In dev: vite.config.ts forwards this to
+// https://ollama.com/api/chat. In prod: api/ollama-proxy.ts (Vercel Edge
+// function) does the same forwarding. One URL in both modes.
+const OLLAMA_CLOUD_URL = '/api/ollama-proxy';
 
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
