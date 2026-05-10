@@ -313,15 +313,20 @@ async function extractExamplePatternContent(
   };
 }
 
+/** JSZip accepts these natively — Blob/File for browser, Uint8Array/Buffer for Node. */
+export type TemplateFileInput = File | Blob | Uint8Array | ArrayBuffer;
+
 export interface ParseTemplateInput {
-  file: File | Blob;
+  file: TemplateFileInput;
   /** Display name, typically the upload filename minus extension. */
   name: string;
 }
 
 export async function parseImsccTemplate(input: ParseTemplateInput): Promise<Template> {
   const { default: JSZip } = await import('jszip');
-  const zip = await JSZip.loadAsync(input.file);
+  // JSZip's TS types are conservative; the runtime accepts every variant in
+  // TemplateFileInput. Cast to satisfy the type checker.
+  const zip = await JSZip.loadAsync(input.file as Blob);
 
   const moduleMetaFile = zip.file('course_settings/module_meta.xml');
   const moduleMetaText = moduleMetaFile ? await moduleMetaFile.async('string') : '';

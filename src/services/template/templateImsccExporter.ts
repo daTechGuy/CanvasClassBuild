@@ -6,6 +6,7 @@ import type {
   ModuleItemContentType,
 } from '../../types/template';
 import type { OutlineFields } from '../../types/outline';
+import type { TemplateFileInput } from './parser';
 
 // ── Helpers ──
 
@@ -439,9 +440,10 @@ export interface AssembleTemplateImsccInput {
   syllabus: Syllabus;
   chapters: GeneratedChapter[];
   template: Template;
-  /** The original .imscc Blob the user uploaded — passes through as the
-   *  starting workspace so verbatim modules / LTI / web_resources carry over. */
-  templateBlob: Blob;
+  /** The original .imscc the user uploaded — passes through as the starting
+   *  workspace so verbatim modules / LTI / web_resources carry over.
+   *  Accepts Blob/File (browser) or Uint8Array/ArrayBuffer (Node CLI). */
+  templateBlob: TemplateFileInput;
   /** Course-outline fields extracted from the instructor's DOCX (Phase 3).
    *  When present, the title/description/info/materials populate Canvas's
    *  Syllabus tab body and the manifest LOM metadata. */
@@ -454,7 +456,9 @@ export async function assembleTemplateImscc(
   const { syllabus, chapters, template, templateBlob, outlineFields } = input;
 
   const { default: JSZip } = await import('jszip');
-  const zip = await JSZip.loadAsync(templateBlob);
+  // JSZip TS types are conservative; runtime accepts all TemplateFileInput
+  // variants. Cast to satisfy the checker without forcing a Blob round-trip.
+  const zip = await JSZip.loadAsync(templateBlob as Blob);
 
   // Resolve the effective course title + description by preferring the
   // outline DOCX fields (instructor-curated) over the AI-generated syllabus

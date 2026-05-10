@@ -85,18 +85,41 @@ The app is a static SPA, so any static host works. The one wrinkle is **Ollama C
 
 The browser always calls `/api/ollama-proxy` regardless of provider — the Vite dev server forwards in development, the Vercel function forwards in production.
 
-## CLI (upstream, not yet adapted for templates)
+## CLI
 
-The original ClassBuild CLI at `scripts/generate-course.ts` still works for the non-template flow:
+### Canvas course CLI ([`scripts/canvas-course.ts`](scripts/canvas-course.ts))
+
+Headless equivalent of the UI's Canvas-template flow. Takes a topic + a template `.imscc` (and optionally an outline `.docx`), generates a syllabus + Canvas Module content for each chapter, and writes a fresh `.imscc` ready for Canvas import.
 
 ```bash
-ANTHROPIC_API_KEY=sk-... npx tsx scripts/generate-course.ts \
-  --topic "The Psychology of Prejudice" \
-  --chapters 12 \
-  --output ./output/prejudice
+ANTHROPIC_API_KEY=sk-... npx tsx scripts/canvas-course.ts \
+  --topic "Statistics for Data Science" \
+  --template ./template.imscc \
+  --outline ./outline.docx \
+  --chapters 16 \
+  --output ./output/stats
 ```
 
-It does **not** know about the Canvas template export, the outline DOCX path, or the Ollama backend. Pull requests welcome.
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--topic` | required | Course topic |
+| `--template` | required | Path to a Canvas `.imscc` template export |
+| `--outline` | — | Path to a course-outline `.docx` (populates the Canvas Syllabus tab body) |
+| `--chapters` | `16` | Number of Module N modules to generate |
+| `--output` | `./output` | Output directory |
+| `--level` | `advanced-undergrad` | Audience |
+| `--length` | `standard` | `concise` / `standard` / `comprehensive` |
+| `--cohort` | `60` | Class size |
+| `--notes` | — | Additional learner context |
+| `--concurrency` | `3` | Parallel chapters during Canvas Module generation |
+| `--syllabus` | — | Path to existing `syllabus.json` (skip regeneration) |
+| `--skip-canvas-module` | `false` | Skip per-chapter content generation (for fast manifest-only test runs) |
+
+### Original ClassBuild CLI ([`scripts/generate-course.ts`](scripts/generate-course.ts))
+
+The upstream CLI is unchanged. It does **not** know about the Canvas template export, the outline DOCX path, or the Ollama backend — use it for the multimedia (slides + audio + infographic) flow.
 
 ## Project layout (fork's additions)
 
