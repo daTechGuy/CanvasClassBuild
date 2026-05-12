@@ -63,6 +63,8 @@ const { values } = parseArgs({
     concurrency: { type: 'string', default: '3' },
     syllabus: { type: 'string' }, // path to existing syllabus.json (skip regeneration)
     'skip-canvas-module': { type: 'boolean', default: false },
+    provider: { type: 'string', default: 'anthropic' }, // anthropic | ollama
+    'ollama-model': { type: 'string', default: 'gpt-oss:120b-cloud' },
   },
   strict: true,
 });
@@ -78,11 +80,28 @@ if (!values.template) {
   process.exit(1);
 }
 
+type Provider = 'anthropic' | 'ollama';
+const PROVIDER: Provider =
+  values.provider === 'ollama' ? 'ollama' : 'anthropic';
+const OLLAMA_MODEL = values['ollama-model']!;
+
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-if (!ANTHROPIC_API_KEY) {
-  console.error('Error: ANTHROPIC_API_KEY environment variable is required');
+const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
+
+if (PROVIDER === 'anthropic' && !ANTHROPIC_API_KEY) {
+  console.error('Error: ANTHROPIC_API_KEY environment variable is required for --provider anthropic');
   process.exit(1);
 }
+if (PROVIDER === 'ollama' && !OLLAMA_API_KEY) {
+  console.error('Error: OLLAMA_API_KEY environment variable is required for --provider ollama');
+  process.exit(1);
+}
+
+// The outline-DOCX extraction step always runs on Claude when available
+// (it's a one-shot JSON extraction that benefits from instruction-following
+// quality). If Anthropic isn't configured, fall back to Ollama.
+const OUTLINE_KEY = ANTHROPIC_API_KEY ?? OLLAMA_API_KEY!;
+const OUTLINE_PROVIDER: Provider = ANTHROPIC_API_KEY ? 'anthropic' : 'ollama';
 
 const setup: CourseSetup = {
   topic: values.topic,
@@ -117,8 +136,11 @@ function printUsage() {
       '    [--level advanced-undergrad] \\\n' +
       '    [--length concise|standard|comprehensive] \\\n' +
       '    [--notes "Additional learner context"] \\\n' +
+      '    [--provider anthropic|ollama] \\\n' +
+      '    [--ollama-model gpt-oss:120b-cloud] \\\n' +
       '    [--concurrency 3] \\\n' +
-      '    [--syllabus ./existing-syllabus.json]',
+      '    [--syllabus ./existing-syllabus.json]\n' +
+      '\nFor Ollama: set OLLAMA_API_KEY (and optionally ANTHROPIC_API_KEY for\noutline extraction quality if you have it).',
   );
 }
 
@@ -193,7 +215,13 @@ async function main() {
       new Uint8Array(docxBuf.buffer, docxBuf.byteOffset, docxBuf.byteLength),
     ]);
     const rawText = await docxToText(docxBlob);
-    const result = await extractOutlineFields({ apiKey: ANTHROPIC_API_KEY!, rawText });
+    const result = await extractOutlineFields({
+      apiKey: OUTLINE_KEY,
+      rawText,
+      provider: OUTLINE_PROVIDER,
+      ollamaApiKey: OUTLINE_PROVIDER === 'ollama' ? OLLAMA_API_KEY ?? undefined : undefined,
+      ollamaModel: OUTLINE_PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
+    });
     outlineFields = result.fields;
     const found = Object.keys(outlineFields).filter(
       (k) => outlineFields![k as keyof OutlineFields],
@@ -208,17 +236,21 @@ async function main() {
     const json = await readFile(values.syllabus, 'utf-8');
     syllabus = JSON.parse(json);
   } else {
-    log('Generating syllabus…');
+    log(`Generating syllabus via ${PROVIDER}…`);
     const { systemPrompt, userMessage } = buildSyllabusPrompt(setup);
     const fullText = await streamMessage(
       {
-        apiKey: ANTHROPIC_API_KEY!,
-        model: MODELS.opus,
+        apiKey: PROVIDER === 'anthropic' ? ANTHROPIC_API_KEY! : '',
+        // Anthropic uses Opus for syllabus; on Ollama we let the user's
+        // chosen --ollama-model handle it.
+        model: PROVIDER === 'anthropic' ? MODELS.opus : undefined,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
         thinkingBudget: 'high',
         maxTokens: 16000,
-        provider: 'anthropic',
+        provider: PROVIDER,
+        ollamaApiKey: PROVIDER === 'ollama' ? OLLAMA_API_KEY! : undefined,
+        ollamaModel: PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
       },
       {},
     );
@@ -244,12 +276,15 @@ async function main() {
       label: `Module ${ch.number}: ${ch.title.slice(0, 40)}`,
       fn: async () => {
         const { content } = await generateTemplateChapter({
-          apiKey: ANTHROPIC_API_KEY!,
+          apiKey: PROVIDER === 'anthropic' ? ANTHROPIC_API_KEY! : '',
           setup,
           chapter: ch,
           courseTitle: syllabus.courseTitle,
           courseOverview: syllabus.courseOverview,
           examplePatternContent: template.examplePatternContent,
+          provider: PROVIDER,
+          ollamaApiKey: PROVIDER === 'ollama' ? OLLAMA_API_KEY! : undefined,
+          ollamaModel: PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
         });
         const target = chapters.find((c) => c.number === ch.number);
         if (target) target.templateContent = content;

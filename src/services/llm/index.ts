@@ -22,10 +22,13 @@ function resolveProvider(options: StreamOptions): {
   const state = useApiStore.getState();
   const provider = explicit ?? state.provider;
   if (provider === 'ollama') {
+    // Prefer explicit overrides (used by the CLI, which doesn't touch
+    // the IndexedDB-backed apiStore). Fall back to store state in the
+    // browser flow.
     return {
       provider,
-      apiKey: state.ollamaApiKey,
-      model: options.model || state.ollamaModel,
+      apiKey: options.ollamaApiKey || state.ollamaApiKey,
+      model: options.model || options.ollamaModel || state.ollamaModel,
     };
   }
   return { provider, apiKey: options.apiKey, model: options.model };

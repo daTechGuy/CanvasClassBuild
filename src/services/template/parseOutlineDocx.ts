@@ -1,4 +1,5 @@
 import { streamMessage } from '../llm';
+import type { LlmProvider } from '../llm/types';
 import type { OutlineFields } from '../../types/outline';
 
 /**
@@ -56,6 +57,11 @@ export interface ExtractOutlineFieldsInput {
   rawText: string;
   /** Cap to avoid blowing the prompt budget on long syllabi. */
   maxChars?: number;
+  /** Provider override for non-browser callers (CLI). */
+  provider?: LlmProvider;
+  /** Ollama-specific overrides for non-browser callers. */
+  ollamaApiKey?: string;
+  ollamaModel?: string;
 }
 
 export interface ExtractOutlineFieldsResult {
@@ -84,6 +90,9 @@ Output ONLY the JSON.`;
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: 1500,
+      provider: input.provider,
+      ollamaApiKey: input.ollamaApiKey,
+      ollamaModel: input.ollamaModel,
     },
     {},
   );

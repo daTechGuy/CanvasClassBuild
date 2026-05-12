@@ -11,6 +11,7 @@ import type {
   TemplateChapterContent,
 } from '../../types/course';
 import type { TemplateExamplePatternContent } from '../../types/template';
+import type { LlmProvider } from '../llm/types';
 
 export interface GenerateTemplateChapterInput {
   apiKey: string;
@@ -20,6 +21,11 @@ export interface GenerateTemplateChapterInput {
   courseOverview: string;
   /** Few-shot exemplar from the template's example-pattern module. */
   examplePatternContent?: TemplateExamplePatternContent;
+  /** Provider override for non-browser callers (CLI). */
+  provider?: LlmProvider;
+  /** Ollama-specific overrides for non-browser callers. */
+  ollamaApiKey?: string;
+  ollamaModel?: string;
   onText?: (text: string) => void;
   onError?: (err: Error) => void;
 }
@@ -37,7 +43,7 @@ export interface GenerateTemplateChapterResult {
 export async function generateTemplateChapter(
   input: GenerateTemplateChapterInput,
 ): Promise<GenerateTemplateChapterResult> {
-  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, onText, onError } = input;
+  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, provider, ollamaApiKey, ollamaModel, onText, onError } = input;
 
   const { systemPrompt, userMessage } = buildTemplateChapterPrompt({
     setup,
@@ -52,11 +58,16 @@ export async function generateTemplateChapter(
   const rawText = await streamWithRetry(
     {
       apiKey,
-      model: MODELS.sonnet,
+      // Don't force MODELS.sonnet when the caller picked Ollama — the
+      // Ollama backend would 404 trying to find a Claude model name.
+      model: provider === 'ollama' ? undefined : MODELS.sonnet,
       system: systemPrompt,
       messages,
       thinkingBudget: 'medium',
       maxTokens: 16000,
+      provider,
+      ollamaApiKey,
+      ollamaModel,
     },
     {
       onText,

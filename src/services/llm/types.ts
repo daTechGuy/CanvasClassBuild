@@ -36,4 +36,12 @@ export interface StreamOptions {
   maxTokens?: number;
   /** Provider override. If omitted, the active provider in apiStore is used. */
   provider?: LlmProvider;
+  /**
+   * Ollama API key, used only when provider==='ollama'. In the browser this
+   * is usually empty (the store provides it). In Node/CLI contexts, pass it
+   * here directly to avoid touching the (IndexedDB-backed) apiStore.
+   */
+  ollamaApiKey?: string;
+  /** Ollama model override. Falls back to apiStore.ollamaModel when omitted. */
+  ollamaModel?: string;
 }

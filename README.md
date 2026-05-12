@@ -113,9 +113,25 @@ Flags:
 | `--length` | `standard` | `concise` / `standard` / `comprehensive` |
 | `--cohort` | `60` | Class size |
 | `--notes` | — | Additional learner context |
+| `--provider` | `anthropic` | LLM provider — `anthropic` or `ollama`. With `ollama`, set `OLLAMA_API_KEY`; with `anthropic`, set `ANTHROPIC_API_KEY` |
+| `--ollama-model` | `gpt-oss:120b-cloud` | Ollama model used when `--provider ollama` |
 | `--concurrency` | `3` | Parallel chapters during Canvas Module generation |
 | `--syllabus` | — | Path to existing `syllabus.json` (skip regeneration) |
 | `--skip-canvas-module` | `false` | Skip per-chapter content generation (for fast manifest-only test runs) |
+
+Ollama example:
+
+```bash
+OLLAMA_API_KEY=... npx tsx scripts/canvas-course.ts \
+  --provider ollama \
+  --ollama-model gpt-oss:120b-cloud \
+  --topic "Statistics for Data Science" \
+  --template ./template.imscc \
+  --chapters 8 \
+  --output ./output/stats
+```
+
+If both `OLLAMA_API_KEY` and `ANTHROPIC_API_KEY` are set, outline-DOCX extraction always uses Claude (its instruction-following on the small JSON-extraction task is more reliable) regardless of `--provider`.
 
 ### Original ClassBuild CLI ([`scripts/generate-course.ts`](scripts/generate-course.ts))
 
