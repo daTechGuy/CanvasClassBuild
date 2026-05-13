@@ -90,6 +90,8 @@ Current coverage:
 - `tests/template-parser.test.ts` — module classification (verbatim / pattern / example-pattern), prefix detection (`Module N:`, `MN Instructor Notes:`, fully-locked `Module N Overview`), `(Example to Edit)` placeholder marker, `**EDIT**` markers, example-pattern content extraction.
 - `tests/imscc-exporter.test.ts` — manifest shape, course_settings extension files, reading webcontent, QTI 1.2 quiz emission (practice + in-class + weekly challenge), Canvas auto-publish sidecars, native discussion topics.
 - `tests/template-imscc-exporter.test.ts` — round-trip: build template fixture → emit IMSCC → re-parse → verify verbatim modules preserved, pattern modules replaced, `web_resources/` + `lti_resource_links/` pass through. Outline-field overrides on title / syllabus body / manifest LOM.
+- `tests/parse-outline-docx.test.ts` — outline-DOCX field extraction with the LLM mocked: clean JSON, code-fenced JSON, partial / empty / malformed responses, char-cap on long input, provider override forwarding.
+- `tests/generate-template-chapter.test.ts` — Canvas Module generation with the LLM mocked: parse success / failure / missing-required-field, few-shot exemplar embedding, no-example case, Ollama provider plumbing, Anthropic Sonnet default.
 
 ## Deploying to production
 
