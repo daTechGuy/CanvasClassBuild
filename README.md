@@ -92,6 +92,9 @@ Current coverage:
 - `tests/template-imscc-exporter.test.ts` — round-trip: build template fixture → emit IMSCC → re-parse → verify verbatim modules preserved, pattern modules replaced, `web_resources/` + `lti_resource_links/` pass through. Outline-field overrides on title / syllabus body / manifest LOM.
 - `tests/parse-outline-docx.test.ts` — outline-DOCX field extraction with the LLM mocked: clean JSON, code-fenced JSON, partial / empty / malformed responses, char-cap on long input, provider override forwarding.
 - `tests/generate-template-chapter.test.ts` — Canvas Module generation with the LLM mocked: parse success / failure / missing-required-field, few-shot exemplar embedding, no-example case, Ollama provider plumbing, Anthropic Sonnet default.
+- `tests/components/TemplatePicker.test.tsx` — empty state, listing uploaded templates, selecting a template sets `templateId` + `numChapters=16`, "No template" doesn't touch `numChapters`, active-template notice.
+- `tests/components/CourseOutlineUpload.test.tsx` — empty preview, populated preview, Clear resets the store, textarea edits write through, blanking a field deletes the key.
+- `tests/components/TemplateTitleEditor.test.tsx` — locked-prefix display, save reassembles `Module N: <suffix>` with prefix intact, blanking the suffix preserves just the prefix, off-pattern titles get a synthesized prefix, Reset rolls drafts back.
 
 ## Deploying to production
 

@@ -1,15 +1,15 @@
 import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  // The React plugin handles the JSX transform so component tests (.test.tsx)
+  // don't need an explicit `import React from 'react'`.
+  plugins: [react()],
   test: {
-    // happy-dom gives us a DOMParser polyfill so the template parser and
-    // exporter (both call `new DOMParser()`) work in Node tests without
-    // any extra setup-file ceremony.
     environment: 'happy-dom',
     globals: false,
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
-    // Network calls in tests are always a bug — fail fast if anything
-    // accidentally hits ollama.com / anthropic / etc.
+    setupFiles: ['tests/setup.ts'],
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     server: { deps: { inline: ['jszip', 'mammoth'] } },
   },
 });
