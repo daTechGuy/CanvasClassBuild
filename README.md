@@ -75,6 +75,22 @@ The upstream ClassBuild also produces:
 
 These are hidden behind the "Advanced mode" toggle on Setup so the Canvas-focused workflow stays tight. Flip it on and the Build page surfaces all the additional tabs.
 
+## Tests
+
+Vitest scaffold covering the parser + exporter critical paths. Network-free,
+runs in <1s.
+
+```bash
+npm test               # run once
+npm run test:watch     # re-run on file change
+npm run test:coverage  # generate coverage report
+```
+
+Current coverage:
+- `tests/template-parser.test.ts` — module classification (verbatim / pattern / example-pattern), prefix detection (`Module N:`, `MN Instructor Notes:`, fully-locked `Module N Overview`), `(Example to Edit)` placeholder marker, `**EDIT**` markers, example-pattern content extraction.
+- `tests/imscc-exporter.test.ts` — manifest shape, course_settings extension files, reading webcontent, QTI 1.2 quiz emission (practice + in-class + weekly challenge), Canvas auto-publish sidecars, native discussion topics.
+- `tests/template-imscc-exporter.test.ts` — round-trip: build template fixture → emit IMSCC → re-parse → verify verbatim modules preserved, pattern modules replaced, `web_resources/` + `lti_resource_links/` pass through. Outline-field overrides on title / syllabus body / manifest LOM.
+
 ## Deploying to production
 
 The app is a static SPA, so any static host works. The one wrinkle is **Ollama Cloud requires a serverless proxy**: ollama.com doesn't set CORS headers, so direct browser fetches are blocked. A Vercel Edge function ships with the repo at [`api/ollama-proxy.ts`](api/ollama-proxy.ts) — Vercel picks it up automatically. Other hosts:
