@@ -96,6 +96,7 @@ Current coverage:
 - `tests/components/CourseOutlineUpload.test.tsx` — empty preview, populated preview, Clear resets the store, textarea edits write through, blanking a field deletes the key.
 - `tests/components/TemplateTitleEditor.test.tsx` — locked-prefix display, save reassembles `Module N: <suffix>` with prefix intact, blanking the suffix preserves just the prefix, off-pattern titles get a synthesized prefix, Reset rolls drafts back.
 - `tests/research-wikipedia.test.ts` — Wikipedia backend with LLM + `fetch` both mocked: query gen → per-query API call → synthesis call ordering, URL builder + dedup, `<span class="searchmatch">` snippet stripping, per-query failure doesn't abort batch, progress phase transitions, fallback query when query-gen returns nothing parseable.
+- `tests/research-tavily.test.ts` — Tavily backend with LLM + `fetch` both mocked: missing-key throw, POST body shape (`max_results`, `search_depth`, `include_answer`) + bearer auth, cross-query dedup by URL, content snippets feed into synthesis prompt, hits without a URL are dropped, per-query failure doesn't abort batch, progress phase order, `published_date` preserved as `pageAge`.
 
 ## Deploying to production
 
