@@ -162,8 +162,11 @@ if 'course_settings/canvas_export.txt' in nameset:
         for it in mod_items:
             ref = (next((c.text for c in it if local(c.tag) == 'identifierref'), None))
             ctype = next((c.text for c in it if local(c.tag) == 'content_type'), None)
-            if ref not in ids_all:
-                problems.append(f'module_meta item points at unknown resource {ref}')
+            # Sub-headers have no resource, and external-URL / LTI items carry their
+            # target inline (their identifierref intentionally matches nothing) - Canvas's
+            # own exporter writes both. Only resource-backed item types must resolve.
+            if ctype in ('WikiPage', 'Quizzes::Quiz', 'DiscussionTopic', 'Attachment', 'Assignment') and ref not in ids_all:
+                problems.append(f'module_meta {ctype} item points at unknown resource {ref}')
             if it.get('identifier') not in org_ids:
                 warnings.append(f'module_meta item {it.get("identifier")} is not in the manifest organization')
             if ctype not in ('WikiPage', 'Quizzes::Quiz', 'DiscussionTopic', 'Attachment', 'Assignment', 'ExternalUrl', 'ContextExternalTool', 'ContextModuleSubHeader'):
@@ -172,6 +175,8 @@ if 'course_settings/canvas_export.txt' in nameset:
 
     for n in [n for n in names if n.startswith('wiki_content/') and n.endswith('.html')]:
         body = z.read(n)
+        if n not in claimed:
+            problems.append(f'{n}: not listed in the manifest, but the native importer scans wiki_content/ directly: it would be imported as a stray page')
         if b'name="identifier"' not in body:
             problems.append(f'{n}: wiki page has no <meta name="identifier">: Canvas cannot match it')
         if re.search(rb'<script|<style', body, re.I):

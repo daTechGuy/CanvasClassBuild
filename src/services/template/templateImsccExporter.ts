@@ -138,6 +138,10 @@ interface ResourceRecord {
   type: string;
   href?: string;
   files: string[];
+  /** `<dependency identifierref>` targets — e.g. a quiz's assessment_meta or a discussion's topicMeta. */
+  dependencies?: string[];
+  /** e.g. "syllabus". */
+  intendeduse?: string;
 }
 
 function parseManifestResources(xmlText: string): Map<string, ResourceRecord> {
@@ -151,11 +155,16 @@ function parseManifestResources(xmlText: string): Map<string, ResourceRecord> {
     const files = Array.from(fileEls)
       .map((f) => f.getAttribute('href') ?? '')
       .filter(Boolean);
+    const dependencies = Array.from(el.getElementsByTagName('dependency'))
+      .map((d) => d.getAttribute('identifierref') ?? '')
+      .filter(Boolean);
     map.set(identifier, {
       identifier,
       type: el.getAttribute('type') ?? '',
       href: el.getAttribute('href') ?? undefined,
       files,
+      dependencies: dependencies.length ? dependencies : undefined,
+      intendeduse: el.getAttribute('intendeduse') ?? undefined,
     });
   }
   return map;
@@ -319,6 +328,50 @@ function emitChapterModule(
   };
 }
 
+// ── Pass-through of the template's own XML ──
+//
+// The parser keeps only a subset of each module/item (no URL for external-link
+// items, no link settings for LTI items, no prerequisites / completion
+// requirements / unlock dates on modules). Re-serialising verbatim modules from
+// that subset silently dropped those — e.g. an external link vanished on import.
+// Verbatim modules are by definition "bundled untouched", so carry their original
+// <module> block through as-is and only renumber its position.
+
+/** `<module identifier="…">…</module>` blocks keyed by identifier. */
+function extractRawModuleBlocks(moduleMetaXml: string): Map<string, string> {
+  const blocks = new Map<string, string>();
+  const re = /<module\s+identifier="([^"]+)"[\s\S]*?<\/module>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(moduleMetaXml)) !== null) blocks.set(m[1], m[0]);
+  return blocks;
+}
+
+/** Replace only the module-level <position> (the one before <items>). */
+function withModulePosition(block: string, position: number): string {
+  const itemsAt = block.indexOf('<items');
+  if (itemsAt < 0) return block;
+  const head = block.slice(0, itemsAt).replace(/<position>[^<]*<\/position>/, `<position>${position}</position>`);
+  return head + block.slice(itemsAt);
+}
+
+/**
+ * Original manifest organization linkage: item identifier -> identifierref
+ * ('' when the item has none, e.g. sub-headers). Used so verbatim items keep
+ * exactly the manifest references they had (an external link's org item points
+ * at its web-link resource, not at the module_meta identifier).
+ */
+function extractOrgRefs(manifestXml: string): Map<string, string> {
+  const refs = new Map<string, string>();
+  const doc = new DOMParser().parseFromString(manifestXml, 'text/xml');
+  for (const org of Array.from(doc.getElementsByTagName('organization'))) {
+    for (const item of Array.from(org.getElementsByTagName('item'))) {
+      const id = item.getAttribute('identifier');
+      if (id) refs.set(id, item.getAttribute('identifierref') ?? '');
+    }
+  }
+  return refs;
+}
+
 // ── Manifest + module_meta emission ──
 
 function moduleMetaItem(item: NewItem | TemplateModuleItem, isVerbatim: boolean): string {
@@ -363,9 +416,16 @@ ${itemsXml}
   </module>`;
 }
 
-function buildModuleMeta(modules: Array<{ mod: NewModule | TemplateModule; isVerbatim: boolean }>): string {
+function buildModuleMeta(
+  modules: Array<{ mod: NewModule | TemplateModule; isVerbatim: boolean }>,
+  rawBlocks: Map<string, string>,
+): string {
   const xml = modules
-    .map((m, i) => moduleMetaModule({ ...m.mod, position: i + 1 } as NewModule | TemplateModule, m.isVerbatim))
+    .map((m, i) => {
+      const raw = m.isVerbatim ? rawBlocks.get(m.mod.identifier) : undefined;
+      if (raw) return '  ' + withModulePosition(raw, i + 1);
+      return moduleMetaModule({ ...m.mod, position: i + 1 } as NewModule | TemplateModule, m.isVerbatim);
+    })
     .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <modules xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
@@ -373,16 +433,18 @@ ${xml}
 </modules>`;
 }
 
-function organizationItem(item: NewItem | TemplateModuleItem): string {
-  const ref = (item as { identifierRef?: string }).identifierRef;
+function organizationItem(item: NewItem | TemplateModuleItem, orgRefs: Map<string, string>): string {
+  const ref = orgRefs.has(item.identifier)
+    ? orgRefs.get(item.identifier) || undefined
+    : (item as { identifierRef?: string }).identifierRef;
   const refAttr = ref ? ` identifierref="${escXml(ref)}"` : '';
   return `          <item identifier="${escXml(item.identifier)}"${refAttr}>
             <title>${escXml(item.title)}</title>
           </item>`;
 }
 
-function organizationModule(mod: NewModule | TemplateModule): string {
-  const itemsXml = mod.items.map(organizationItem).join('\n');
+function organizationModule(mod: NewModule | TemplateModule, orgRefs: Map<string, string>): string {
+  const itemsXml = mod.items.map((it) => organizationItem(it, orgRefs)).join('\n');
   return `        <item identifier="${escXml(mod.identifier)}">
           <title>${escXml(mod.title)}</title>
 ${itemsXml}
@@ -394,14 +456,18 @@ function buildManifest(
   effectiveDescription: string,
   modules: Array<NewModule | TemplateModule>,
   allResources: Array<NewResource | ResourceRecord>,
+  orgRefs: Map<string, string>,
 ): string {
   const courseId = `canvasclassbuild-${slug(effectiveTitle) || 'course'}`;
-  const orgItems = modules.map(organizationModule).join('\n');
+  const orgItems = modules.map((m) => organizationModule(m, orgRefs)).join('\n');
   const resourceXml = allResources
     .map((r) => {
       const files = r.files.map((f) => `<file href="${escXml(f)}"/>`).join('');
+      const { dependencies, intendeduse } = r as ResourceRecord;
+      const deps = (dependencies ?? []).map((d) => `<dependency identifierref="${escXml(d)}"/>`).join('');
       const hrefAttr = r.href ? ` href="${escXml(r.href)}"` : '';
-      return `    <resource identifier="${escXml(r.identifier)}" type="${escXml(r.type)}"${hrefAttr}>${files}</resource>`;
+      const useAttr = intendeduse ? ` intendeduse="${escXml(intendeduse)}"` : '';
+      return `    <resource identifier="${escXml(r.identifier)}" type="${escXml(r.type)}"${hrefAttr}${useAttr}>${files}${deps}</resource>`;
     })
     .join('\n');
 
@@ -502,10 +568,55 @@ export async function assembleTemplateImscc(
   }
 
   const keptResources: ResourceRecord[] = [];
+  const droppedResources: ResourceRecord[] = [];
   for (const r of originalResources.values()) {
-    if (patternRefs.has(r.identifier) && !verbatimRefs.has(r.identifier)) continue;
+    if (patternRefs.has(r.identifier) && !verbatimRefs.has(r.identifier)) {
+      droppedResources.push(r);
+      continue;
+    }
     keptResources.push(r);
   }
+
+  // A dropped resource's dependency resources (a discussion's topicMeta, a quiz's
+  // assessment_meta) belong to it — drop them too unless something we keep still
+  // depends on them.
+  const stillNeeded = (depId: string) =>
+    verbatimRefs.has(depId) ||
+    keptResources.some((k) => k.identifier !== depId && (k.dependencies ?? []).includes(depId));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const d of [...droppedResources]) {
+      for (const depId of d.dependencies ?? []) {
+        const dep = keptResources.find((k) => k.identifier === depId);
+        if (dep && !stillNeeded(depId)) {
+          keptResources.splice(keptResources.indexOf(dep), 1);
+          droppedResources.push(dep);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // Remove the dropped resources' files from the archive. Canvas's native importer
+  // scans folders such as wiki_content/ directly, so a leftover page file would be
+  // imported as a stray (often duplicate) page even though the manifest no longer
+  // lists it.
+  const keptFiles = new Set<string>();
+  for (const k of keptResources) {
+    if (k.href) keptFiles.add(k.href);
+    for (const f of k.files) keptFiles.add(f);
+  }
+  for (const d of droppedResources) {
+    for (const f of [...(d.href ? [d.href] : []), ...d.files]) {
+      if (!keptFiles.has(f)) zip.remove(f);
+    }
+  }
+
+  // The template's own module/org XML, kept to pass verbatim modules through intact.
+  const originalModuleMetaText =
+    (await zip.file('course_settings/module_meta.xml')?.async('string')) ?? '';
+  const rawModuleBlocks = extractRawModuleBlocks(originalModuleMetaText);
+  const orgRefs = extractOrgRefs(originalManifestText);
 
   // Emit new chapter modules from each chapter that has templateContent.
   const newModules: NewModule[] = [];
@@ -530,7 +641,7 @@ export async function assembleTemplateImscc(
   ];
 
   // Rebuild course_settings/module_meta.xml.
-  zip.file('course_settings/module_meta.xml', buildModuleMeta(orderedModules));
+  zip.file('course_settings/module_meta.xml', buildModuleMeta(orderedModules, rawModuleBlocks));
 
   // Outline-driven overrides: replace syllabus.html body and update the
   // <title> in course_settings.xml. Both are no-ops when outlineFields is
@@ -563,7 +674,7 @@ export async function assembleTemplateImscc(
   ];
   zip.file(
     'imsmanifest.xml',
-    buildManifest(effectiveTitle, effectiveDescription, allModulesForManifest, allResourcesForManifest),
+    buildManifest(effectiveTitle, effectiveDescription, allModulesForManifest, allResourcesForManifest, orgRefs),
   );
 
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
