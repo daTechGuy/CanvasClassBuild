@@ -11,6 +11,7 @@ import { useApiStore } from '../../src/store/apiStore';
 import { useUiStore } from '../../src/store/uiStore';
 import { streamMessage } from '../../src/services/claude/streaming';
 import { runResearch } from '../../src/services/research';
+import { docxToText, extractOutlineFields } from '../../src/services/template/parseOutlineDocx';
 import type { Syllabus } from '../../src/types/course';
 
 /**
@@ -24,6 +25,12 @@ vi.mock('../../src/services/claude/streaming', () => ({
 }));
 vi.mock('../../src/services/research', () => ({
   runResearch: vi.fn(() => new Promise(() => {})),
+}));
+// Stub the DOCX parser + LLM extraction: the point is which KEY reaches extraction, and feeding a
+// fake .docx to the real parser fails asynchronously (an unhandled rejection that fails CI).
+vi.mock('../../src/services/template/parseOutlineDocx', () => ({
+  docxToText: vi.fn(async () => 'outline text'),
+  extractOutlineFields: vi.fn(async () => ({ fields: { courseTitle: 'Parsed Title' } })),
 }));
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -73,20 +80,29 @@ describe('outline upload gate', () => {
     const user = userEvent.setup();
     render(<CourseOutlineUpload />);
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(input, new File(['not really a docx'], 'outline.docx'));
+    await user.upload(input, new File(['stub'], 'outline.docx'));
   }
 
   it('names the active provider when its key is missing, even if another provider has one', async () => {
     setKeys({ provider: 'gemini', claudeApiKey: 'sk-ant-present', geminiApiKey: '' });
     await upload();
     expect(await screen.findByText(/add your gemini api key before uploading/i)).toBeInTheDocument();
+    expect(docxToText).not.toHaveBeenCalled();
+    expect(extractOutlineFields).not.toHaveBeenCalled();
   });
 
-  it('passes the gate with only a Gemini key (the failure is then about the file, not the key)', async () => {
-    setKeys({ provider: 'gemini', claudeApiKey: '', geminiApiKey: 'AIza-x' });
+  it.each([
+    ['gemini', { geminiApiKey: 'AIza-the-key' }, 'AIza-the-key'],
+    ['ollama', { ollamaApiKey: 'ollama-the-key' }, 'ollama-the-key'],
+    ['anthropic', { claudeApiKey: 'sk-ant-the-key' }, 'sk-ant-the-key'],
+  ] as const)('with only a %s key, extraction runs and receives THAT key', async (provider, keys, expectedKey) => {
+    setKeys({ provider, ...keys });
     await upload();
-    await waitFor(() => expect(screen.queryByText(/before uploading/i)).not.toBeInTheDocument());
-    expect(await screen.findByText(/could not parse|couldn.t|failed|error/i)).toBeInTheDocument();
+
+    await waitFor(() => expect(extractOutlineFields).toHaveBeenCalledTimes(1));
+    expect(extractOutlineFields).toHaveBeenCalledWith(expect.objectContaining({ apiKey: expectedKey, rawText: 'outline text' }));
+    await waitFor(() => expect(useCourseStore.getState().outlineFields?.courseTitle).toBe('Parsed Title'));
+    expect(screen.queryByText(/before uploading/i)).not.toBeInTheDocument();
   });
 });
 
