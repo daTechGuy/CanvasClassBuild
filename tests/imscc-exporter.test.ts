@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import JSZip from 'jszip';
 import { assembleImscc } from '../src/services/export/imsccExporter';
 import type {
@@ -221,5 +221,92 @@ describe('assembleImscc', () => {
 
     expect(zip.file('chapter-1-chapter-one/discussions/disc-2.xml')).toBeTruthy();
     expect(zip.file('chapter-1-chapter-one/discussions/disc-2-meta.xml')).toBeTruthy();
+  });
+});
+
+describe('assembleImscc — slide decks', () => {
+  afterEach(() => {
+    vi.doUnmock('../src/services/export/pptxExporter');
+    vi.resetModules();
+  });
+
+  const slides = [
+    { title: 'A', speakerNotes: '', bullets: [], imagePrompt: 'prompt a' },
+    { title: 'B', speakerNotes: '', bullets: [], imagePrompt: 'prompt b' },
+  ];
+
+  async function loadWithFakePptx() {
+    const generatePptx = vi.fn(
+      async (
+        sl: unknown[],
+        _c: string,
+        _t: string,
+        _theme: string | undefined,
+        _key: string,
+        opts: { onSlideRendered?: (i: number, uri: string) => void; onProgress?: (c: number, t: number, p: string) => void },
+      ) => {
+        // Pretend two images were rendered.
+        sl.forEach((_, i) => opts.onSlideRendered?.(i, `data:image/png;base64,${i}`));
+        opts.onProgress?.(sl.length, sl.length, 'packing');
+        return { blob: new Blob(['PPTX']), renderedImages: {} };
+      },
+    );
+    vi.doMock('../src/services/export/pptxExporter', () => ({ generatePptx }));
+    const mod = await import('../src/services/export/imsccExporter');
+    return { assembleImscc: mod.assembleImscc, generatePptx };
+  }
+
+  async function files(blob: Blob) {
+    return Object.keys((await JSZip.loadAsync(await blob.arrayBuffer())).files);
+  }
+
+  it('omits slides.pptx and never calls the image API when slides are unrendered and no opt-in', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      openaiApiKey: 'sk-test',
+    });
+
+    expect(generatePptx).not.toHaveBeenCalled();
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(false);
+  });
+
+  it('bundles the deck from cached images without re-rendering', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const rendered = slides.map((sl) => ({ ...sl, imageDataUri: 'data:image/png;base64,x' }));
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: rendered })], {
+      openaiApiKey: 'sk-test',
+    });
+
+    expect(generatePptx).toHaveBeenCalledTimes(1);
+    const opts = generatePptx.mock.calls[0][5] as { preRendered: Record<number, string> };
+    expect(Object.keys(opts.preRendered)).toEqual(['0', '1']);
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(true);
+  });
+
+  it('renders and bundles missing decks only when renderMissingSlides is set, reporting progress', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const onSlideRendered = vi.fn();
+    const onSlideProgress = vi.fn();
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      openaiApiKey: 'sk-test',
+      renderMissingSlides: true,
+      onSlideRendered,
+      onSlideProgress,
+    });
+
+    expect(generatePptx).toHaveBeenCalledTimes(1);
+    expect(onSlideRendered).toHaveBeenCalledWith(1, 0, 'data:image/png;base64,0');
+    expect(onSlideRendered).toHaveBeenCalledWith(1, 1, 'data:image/png;base64,1');
+    expect(onSlideProgress).toHaveBeenCalledWith(1, 2, 2, 'packing');
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(true);
+  });
+
+  it('never renders without an OpenAI key, even when asked to', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      renderMissingSlides: true,
+    });
+
+    expect(generatePptx).not.toHaveBeenCalled();
   });
 });

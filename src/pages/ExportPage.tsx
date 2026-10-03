@@ -19,7 +19,7 @@ import {
   buildOutcomesTableFragment,
   hashSyllabus,
 } from '../templates/outcomesTableTemplate';
-import { CodexButton as Button } from '../components/codex';
+import { CodexButton as Button, CodexModal } from '../components/codex';
 import type { InClassQuizQuestion } from '../types/course';
 import { friendlyError } from '../utils/errors';
 import { buildProjectFile } from '../utils/projectFile';
@@ -94,6 +94,7 @@ export function ExportPage() {
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isExportingImscc, setIsExportingImscc] = useState(false);
+  const [showImsccSlidesPrompt, setShowImsccSlidesPrompt] = useState(false);
   const [isGeneratingOutcomes, setIsGeneratingOutcomes] = useState(false);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
   const [outcomesStreamChars, setOutcomesStreamChars] = useState(0);
@@ -405,8 +406,9 @@ export function ExportPage() {
     return buildOutcomesCsv(curriculumMap, syllabus);
   }, [curriculumMap, syllabus]);
 
-  const handleDownloadImscc = useCallback(async () => {
+  const handleDownloadImscc = useCallback(async (renderMissingSlides = false) => {
     if (!syllabus || chapters.length === 0) return;
+    setShowImsccSlidesPrompt(false);
     setIsExportingImscc(true);
     try {
       const { saveAs } = await import('file-saver');
@@ -438,19 +440,62 @@ export function ExportPage() {
         saveAs(blob, `${courseName}.imscc`);
       } else {
         const { assembleImscc } = await import('../services/export/imsccExporter');
-        const blob = await assembleImscc(syllabus, chapters, {
-          themeId: setup.themeId,
-          openaiApiKey,
-          curriculumCsv: buildCurriculumMapCsv() ?? undefined,
-        });
-        saveAs(blob, `${courseName}.imscc`);
+        // Slide decks are image-driven and rendered images aren't kept across
+        // reloads, so rendering them is an explicit, user-confirmed spend.
+        const ui = useUiStore.getState();
+        if (renderMissingSlides && ui.slidesRender) {
+          throw new Error(
+            `Another deck (Class ${ui.slidesRender.chapterNum}) is rendering. Wait for it to finish.`,
+          );
+        }
+        try {
+          const blob = await assembleImscc(syllabus, chapters, {
+            themeId: setup.themeId,
+            openaiApiKey,
+            renderMissingSlides,
+            onSlideRendered: (chapterNum, i, dataUri) => setSlideImage(chapterNum, i, dataUri),
+            onSlideProgress: (chapterNum, current, total, phase) => {
+              if (renderMissingSlides) {
+                useUiStore.getState().setSlidesRender({
+                  chapterNum,
+                  current,
+                  total,
+                  phase: phase as 'rendering' | 'packing',
+                });
+              }
+            },
+            curriculumCsv: buildCurriculumMapCsv() ?? undefined,
+          });
+          saveAs(blob, `${courseName}.imscc`);
+        } finally {
+          if (renderMissingSlides) useUiStore.getState().setSlidesRender(null);
+        }
       }
     } catch (err) {
       setError(friendlyError(err, 'Common Cartridge export failed.'));
     } finally {
       setIsExportingImscc(false);
     }
-  }, [syllabus, chapters, setup.themeId, setup.templateId, outlineFields, openaiApiKey, buildCurriculumMapCsv, setError]);
+  }, [syllabus, chapters, setup.themeId, setup.templateId, outlineFields, openaiApiKey, setSlideImage, buildCurriculumMapCsv, setError]);
+
+  // Decks that would need image rendering before they can go in a cartridge.
+  // (Template-mode cartridges don't bundle decks, so no prompt there.)
+  const imsccUnrenderedImages = setup.templateId
+    ? 0
+    : chapters.reduce(
+        (n, ch) =>
+          n +
+          (ch.slidesJson ?? []).filter((sl) => sl.imagePrompt?.trim() && !sl.imageDataUri).length,
+        0,
+      );
+  const imsccDeckChapters = chapters.filter((ch) =>
+    (ch.slidesJson ?? []).some((sl) => sl.imagePrompt?.trim() && !sl.imageDataUri),
+  ).length;
+
+  const handleImsccClick = useCallback(() => {
+    if (imsccUnrenderedImages > 0) setShowImsccSlidesPrompt(true);
+    else void handleDownloadImscc(false);
+  }, [imsccUnrenderedImages, handleDownloadImscc]);
 
   const handleDownloadOutcomesCsv = useCallback(() => {
     const csv = buildCurriculumMapCsv();
@@ -1103,7 +1148,7 @@ export function ExportPage() {
             <Button
               variant="secondary"
               size="lg"
-              onClick={handleDownloadImscc}
+              onClick={handleImsccClick}
               disabled={chapters.length === 0 || isExportingImscc}
               title="Common Cartridge — import directly into Canvas (Settings → Import Course Content)."
             >
@@ -1129,6 +1174,41 @@ export function ExportPage() {
             </Button>
           </div>
         </header>
+
+        <CodexModal
+          open={showImsccSlidesPrompt}
+          onClose={() => setShowImsccSlidesPrompt(false)}
+          kicker="export for canvas"
+          title={
+            <>
+              Include the slide <span className="cb-italic">decks</span>?
+            </>
+          }
+          sub={
+            openaiApiKey
+              ? `${imsccDeckChapters} ${imsccDeckChapters === 1 ? 'chapter has' : 'chapters have'} slides that need ${imsccUnrenderedImages} image${imsccUnrenderedImages === 1 ? '' : 's'} rendered (gpt-image-2, 4K) before they can go in the cartridge. Rendered images aren't kept after a reload, so this uses your OpenAI credits each time. Or export now without the decks.`
+              : 'The slide decks are image-driven, and rendering them needs an OpenAI key. Add one in Setup to include decks, or export now without them.'
+          }
+          width={500}
+          actions={
+            <>
+              <span style={{ flex: 1 }} />
+              <Button variant="ghost" onClick={() => setShowImsccSlidesPrompt(false)}>
+                Cancel
+              </Button>
+              <Button variant="secondary" onClick={() => void handleDownloadImscc(false)}>
+                Export without decks
+              </Button>
+              {openaiApiKey && (
+                <Button variant="primary" onClick={() => void handleDownloadImscc(true)}>
+                  Render &amp; include decks →
+                </Button>
+              )}
+            </>
+          }
+        >
+          <></>
+        </CodexModal>
 
         {/* ── ERROR BANNER ─────────────────────────────────────── */}
         {error && (

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ExportPage } from '../../src/pages/ExportPage';
 import { useCourseStore } from '../../src/store/courseStore';
 import { useUiStore } from '../../src/store/uiStore';
 import { useApiStore } from '../../src/store/apiStore';
+import { assembleImscc } from '../../src/services/export/imsccExporter';
 import type { Syllabus, GeneratedChapter } from '../../src/types/course';
 
 // Keep these heavy modules out of the test path — they're only exercised on
@@ -13,6 +14,13 @@ import type { Syllabus, GeneratedChapter } from '../../src/types/course';
 vi.mock('../../src/services/claude/streaming', () => ({
   streamMessage: vi.fn(),
 }));
+
+// The cartridge build + save are exercised in their own tests; here we only
+// care how the page decides to call them.
+vi.mock('../../src/services/export/imsccExporter', () => ({
+  assembleImscc: vi.fn(async () => new Blob(['imscc'])),
+}));
+vi.mock('file-saver', () => ({ saveAs: vi.fn() }));
 
 function makeSyllabus(numChapters: number): Syllabus {
   return {
@@ -48,6 +56,7 @@ function renderPage() {
 describe('<ExportPage />', () => {
   beforeEach(() => {
     useCourseStore.getState().reset();
+    vi.mocked(assembleImscc).mockClear();
     useUiStore.setState({ error: null, isGenerating: false });
     useApiStore.setState({ claudeApiKey: 'sk-x', advancedMode: false });
     // jsdom/happy-dom don't implement URL.createObjectURL; download handlers
@@ -259,5 +268,102 @@ describe('<ExportPage />', () => {
 
     await user.click(screen.getByRole('button', { name: /^reading/i }));
     // No assertion needed — we're verifying the click doesn't throw.
+  });
+
+  describe('Export for Canvas — slide decks', () => {
+    const unrendered = [
+      { title: 'A', speakerNotes: '', bullets: [], imagePrompt: 'a' },
+      { title: 'B', speakerNotes: '', bullets: [], imagePrompt: 'b' },
+    ] as unknown as GeneratedChapter['slidesJson'];
+
+    function seed(slidesJson?: GeneratedChapter['slidesJson']) {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [makeChapter({ number: 1, title: 'Chapter 1', slidesJson })],
+      });
+    }
+
+    it('exports straight away when there are no unrendered decks', async () => {
+      const user = userEvent.setup();
+      seed(undefined);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({ renderMissingSlides: false });
+    });
+
+    it('asks before rendering when decks have unrendered images and a key is set', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/2 images/i);
+      expect(assembleImscc).not.toHaveBeenCalled();
+      expect(within(dialog).getByRole('button', { name: /render & include decks/i })).toBeInTheDocument();
+    });
+
+    it('"Export without decks" exports without opting in to rendering', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /export without decks/i }));
+
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({ renderMissingSlides: false });
+    });
+
+    it('"Render & include decks" opts in and passes the OpenAI key', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /render & include decks/i }));
+
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({
+        renderMissingSlides: true,
+        openaiApiKey: 'sk-openai',
+      });
+    });
+
+    it('without an OpenAI key the dialog only offers to export without decks', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: '' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+
+      expect(within(dialog).queryByRole('button', { name: /render & include decks/i })).not.toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: /export without decks/i })).toBeInTheDocument();
+    });
+
+    it('cancelling the dialog exports nothing', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+      expect(assembleImscc).not.toHaveBeenCalled();
+    });
   });
 });

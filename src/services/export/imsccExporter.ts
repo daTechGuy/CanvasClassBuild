@@ -351,6 +351,14 @@ export interface ImsccOptions {
    * rendered image — an export click must never silently spend image credits.
    */
   openaiApiKey?: string;
+  /**
+   * Explicit opt-in to render any missing slide images (spends OpenAI image
+   * credits) so the decks can be bundled. Requires openaiApiKey. Rendered
+   * images are reported through onSlideRendered so callers can cache them.
+   */
+  renderMissingSlides?: boolean;
+  onSlideRendered?: (chapterNum: number, slideIndex: number, dataUri: string) => void;
+  onSlideProgress?: (chapterNum: number, current: number, total: number, phase: string) => void;
   curriculumCsv?: string;
 }
 
@@ -460,7 +468,8 @@ export async function assembleImscc(
       !!ch.slidesJson &&
       ch.slidesJson.length > 0 &&
       ch.slidesJson.every((sl) => !sl.imagePrompt?.trim() || !!sl.imageDataUri);
-    if (slidesFullyRendered && opts.openaiApiKey?.trim() && ch.slidesJson) {
+    const includeSlides = slidesFullyRendered || (opts.renderMissingSlides && !!ch.slidesJson?.length);
+    if (includeSlides && opts.openaiApiKey?.trim() && ch.slidesJson) {
       try {
         const { generatePptx } = await import('./pptxExporter');
         const preRendered: Record<number, string> = {};
@@ -473,7 +482,12 @@ export async function assembleImscc(
           ch.title,
           opts.themeId,
           opts.openaiApiKey,
-          { preRendered },
+          {
+            preRendered,
+            onSlideRendered: (i, dataUri) => opts.onSlideRendered?.(ch.number, i, dataUri),
+            onProgress: (current, total, phase) =>
+              opts.onSlideProgress?.(ch.number, current, total, phase),
+          },
         );
         const href = `${folder}/slides.pptx`;
         zip.file(href, pptxBlob);
