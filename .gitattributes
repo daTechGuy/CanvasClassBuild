@@ -1,0 +1,6 @@
+# Shell and Ruby scripts must keep LF even on Windows checkouts (core.autocrlf=true would
+# otherwise give them CRLF and bash/ruby fail with "\r: command not found").
+*.sh text eol=lf
+*.rb text eol=lf
+# Canvas cartridges are zip archives.
+*.imscc binary

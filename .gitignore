@@ -37,6 +37,8 @@ deploy-courses/
 # Local template uploads
 *.imscc
 *.docx
+# ...except the scrubbed, Canvas-made cartridges the tests run against
+!tests/fixtures/*.imscc
 
 # Design scratch + internal references (not for the public repo)
 ClassBuild Redesign/

@@ -101,7 +101,7 @@ services, setup components). Pages — `BuildPage`, `SyllabusPage`,
 
 Without an uploaded template, "Export for Canvas (.imscc)" writes a **native Canvas course export** — the same file layout Canvas's own exporter produces (`module_meta.xml`, `wiki_content/` pages, `non_cc_assessments/` quizzes, `assessment_meta.xml`, `assignment_groups.xml`, syllabus). This matters: a package carrying Canvas's `course_settings/canvas_export.txt` marker is read by Canvas's *native* importer, which silently ignores plain Common Cartridge manifest content, so a "generic" cartridge with that marker imports with no modules, pages or quizzes.
 
-Check any cartridge offline with `python tools/validate-imscc.py file.imscc` (it flags exactly that class of problem). To test imports end to end you need a Canvas with Instructure's QTIMigrationTool installed, otherwise quizzes are skipped silently.
+Check any cartridge offline with `npm run validate:imscc -- file.imscc` (it flags exactly that class of problem and runs in CI against real Canvas-made fixtures). To test an import end to end, use the Canvas harness in [`tools/canvas-test/`](tools/canvas-test/README.md) — it builds a dev Canvas (with Instructure's QTIMigrationTool; without it quizzes are skipped silently) and shows what Canvas actually built.
 
 Current coverage:
 - `tests/template-parser.test.ts` — module classification (verbatim / pattern / example-pattern), prefix detection (`Module N:`, `MN Instructor Notes:`, fully-locked `Module N Overview`), `(Example to Edit)` placeholder marker, `**EDIT**` markers, example-pattern content extraction.
