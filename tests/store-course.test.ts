@@ -68,7 +68,7 @@ describe('useCourseStore', () => {
     expect(s().setup.topic).toBe('Stats');
     expect(s().setup.numChapters).toBe(8);
     // Other defaults are preserved.
-    expect(s().setup.themeId).toBe('midnight');
+    expect(s().setup.themeId).toBe('press');
   });
 
   it('setSyllabus stores the syllabus AND clears any existing curriculumMap (it gets re-built later)', () => {

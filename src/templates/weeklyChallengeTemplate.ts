@@ -24,19 +24,26 @@ export function buildWeeklyChallengeHtml(
   // ── Build-time answer obfuscation ──
   // Strip answer fields from questions and encode them so they don't appear
   // as plaintext in the HTML source. The JS runtime decodes them.
-  const xorKey = 'wc' + (challengeData.metadata.weekNumber || 1);
+  const xorKey = 'wc' + (challengeData.metadata?.weekNumber || 1);
   function obf(val: string | number): string {
     const s = String(val);
     let out = '';
     for (let i = 0; i < s.length; i++) {
-      out += String.fromCharCode(s.charCodeAt(i) ^ xorKey.charCodeAt(i % xorKey.length));
+      // Mask to a byte so this matches Buffer's latin1 truncation (used by the
+      // Node CLI) and so btoa() — which rejects code points > 0xFF — is safe.
+      out += String.fromCharCode((s.charCodeAt(i) ^ xorKey.charCodeAt(i % xorKey.length)) & 0xff);
     }
-    return Buffer.from(out, 'binary').toString('base64');
+    // btoa, NOT Buffer: this template renders in the BROWSER (Build page) as
+    // well as the Node CLI, and `Buffer` is undefined in the browser — the
+    // ReferenceError was swallowed, so the in-browser challenge (and its SCORM
+    // export) silently never rendered. btoa works in both (browser global;
+    // Node >= 16) and the runtime decoder already uses atob.
+    return btoa(out);
   }
 
   // Deep clone and strip answers
   const sanitised = JSON.parse(JSON.stringify(challengeData)) as WeeklyChallengeData;
-  for (const q of sanitised.questions) {
+  for (const q of (sanitised.questions || [])) {
     // Strip answer fields from variants too
     const allVersions = [q, ...(q.variants || []) as Record<string, unknown>[]];
     for (const v of allVersions) {
@@ -2732,7 +2739,15 @@ export function buildWeeklyChallengeHtml(
             return null;
         }
 
-        const scormAPI = findSCORM2004API(window);
+        // findSCORM2004API walks up to window.parent; in a sandboxed / cross-
+        // origin embed (e.g. ClassBuild's preview iframe, which has no
+        // allow-same-origin) reading win.API_1484_11 on the parent throws a
+        // SecurityError. Without this guard the throw aborts init before the
+        // "Begin Challenge" button is wired, so the preview looks dead while the
+        // downloaded file (not sandboxed) works. Guard it: a missing LMS just
+        // means run standalone.
+        let scormAPI = null;
+        try { scormAPI = findSCORM2004API(window); } catch (e) { scormAPI = null; }
         let scormConnected = false;
 
         function scormInit() {

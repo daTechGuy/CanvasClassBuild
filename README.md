@@ -50,7 +50,8 @@ Open [localhost:5173](http://localhost:5173).
 | Anthropic Claude | LLM provider = Anthropic, **OR** research backend = Claude web search | Course-content generation; Claude's built-in web search for the Research stage |
 | Ollama Cloud | LLM provider = Ollama Cloud | Course-content generation. Free tier doesn't include cloud models — see ollama.com/settings/keys |
 | Tavily | Research backend = Tavily | Web search for the Research stage. Free tier covers ~1,000 searches/month |
-| Google Gemini | Advanced mode + you want infographics or audiobook narration | TTS + image generation (optional) |
+| OpenAI | Advanced mode + you want slide images / chapter figures | Image generation (gpt-image-2, optional) |
+| ElevenLabs | Advanced mode + you want audiobook narration | Text-to-speech (optional) |
 
 The Wikipedia research backend needs no key.
 
@@ -71,7 +72,7 @@ The upstream ClassBuild also produces:
 - Gamified practice quiz with confidence calibration
 - In-class quiz (5 shuffled versions + answer keys)
 - PowerPoint slides with speaker notes
-- AI-narrated audiobook (Gemini TTS)
+- AI-narrated audiobook (ElevenLabs)
 - AI-generated infographic (Gemini)
 - Weekly mastery challenge with 6 question types and SCORM 2004 wrapper
 - Discussion starters and classroom activities
@@ -107,7 +108,6 @@ Current coverage:
 - `tests/components/TemplateTitleEditor.test.tsx` — locked-prefix display, save reassembles `Module N: <suffix>` with prefix intact, blanking the suffix preserves just the prefix, off-pattern titles get a synthesized prefix, Reset rolls drafts back.
 - `tests/research-wikipedia.test.ts` — Wikipedia backend with LLM + `fetch` both mocked: query gen → per-query API call → synthesis call ordering, URL builder + dedup, `<span class="searchmatch">` snippet stripping, per-query failure doesn't abort batch, progress phase transitions, fallback query when query-gen returns nothing parseable.
 - `tests/research-tavily.test.ts` — Tavily backend with LLM + `fetch` both mocked: missing-key throw, POST body shape (`max_results`, `search_depth`, `include_answer`) + bearer auth, cross-query dedup by URL, content snippets feed into synthesis prompt, hits without a URL are dropped, per-query failure doesn't abort batch, progress phase order, `published_date` preserved as `pageAge`.
-- `tests/components/ApiKeyPanel.test.tsx` — provider toggle (Claude/Ollama) writes to apiStore, research backend toggle (Claude / Tavily / Wikipedia), hint text changes per selection, Ollama model input visibility gated on `provider==='ollama' && key.trim() !== ''`, model edits write through, auto-validate on mount POSTs to the right endpoints with bearer auth (Ollama → `/api/ollama-proxy`, Tavily → `api.tavily.com/search`, Gemini → `googleapis.com/.../models?key=…`), non-2xx sets `keyValid=false`, no re-validation when already validated or key is blank.
 - `tests/research-anthropic.test.ts` — Anthropic research backend with `streamWithRetry` mocked: streamWithRetry called with the Claude key + `web_search_20250305` tool + forced `provider:'anthropic'`, progress phases emitted in `thinking → searching → compiling` order, queries appended via `appendQueries`, streamed text appended via `appendSynthesisText`, dedup by URL across batches, `setLatestSource` is the last fresh hit, valid JSON parses into a dossier, malformed text falls back to a dossier built from collected web results.
 
 ## Deploying to production
@@ -203,7 +203,7 @@ src/
 
 ## Built with
 
-React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Sonnet 4.6 / Opus 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · Gemini
+React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · OpenAI gpt-image-2 · ElevenLabs
 
 ## Contributing
 

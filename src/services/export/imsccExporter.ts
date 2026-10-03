@@ -345,6 +345,12 @@ function buildManifest(
 
 export interface ImsccOptions {
   themeId?: string;
+  /**
+   * OpenAI key. The slide deck is image-driven (one gpt-image-2 render per
+   * slide), so slides.pptx is only bundled when every slide already has a
+   * rendered image — an export click must never silently spend image credits.
+   */
+  openaiApiKey?: string;
   curriculumCsv?: string;
 }
 
@@ -447,15 +453,27 @@ export async function assembleImscc(
       }
     }
 
-    // 5. Slides PPTX (file resource — Canvas attaches as a downloadable file)
-    if (ch.slidesJson && ch.slidesJson.length > 0) {
+    // 5. Slides PPTX (file resource — Canvas attaches as a downloadable file).
+    // Only when every imagePrompt slide is already rendered this session
+    // (rendered images aren't persisted across reloads) — see openaiApiKey.
+    const slidesFullyRendered =
+      !!ch.slidesJson &&
+      ch.slidesJson.length > 0 &&
+      ch.slidesJson.every((sl) => !sl.imagePrompt?.trim() || !!sl.imageDataUri);
+    if (slidesFullyRendered && opts.openaiApiKey?.trim() && ch.slidesJson) {
       try {
         const { generatePptx } = await import('./pptxExporter');
-        const pptxBlob = await generatePptx(
+        const preRendered: Record<number, string> = {};
+        ch.slidesJson.forEach((sl, i) => {
+          if (sl.imageDataUri) preRendered[i] = sl.imageDataUri;
+        });
+        const { blob: pptxBlob } = await generatePptx(
           ch.slidesJson,
           syllabus.courseTitle,
           ch.title,
           opts.themeId,
+          opts.openaiApiKey,
+          { preRendered },
         );
         const href = `${folder}/slides.pptx`;
         zip.file(href, pptxBlob);

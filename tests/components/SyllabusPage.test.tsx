@@ -60,9 +60,9 @@ describe('<SyllabusPage />', () => {
     useApiStore.setState({ claudeApiKey: '' });
   });
 
-  it('shows the "Generating Syllabus..." placeholder when no syllabus and no thinking yet', () => {
+  it('shows the drafting placeholder when no syllabus has arrived yet', () => {
     renderPage();
-    expect(screen.getByRole('heading', { name: /generating syllabus/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /drafting your syllabus/i })).toBeInTheDocument();
   });
 
   it('renders the course title and overview once a syllabus is loaded', () => {
@@ -81,54 +81,63 @@ describe('<SyllabusPage />', () => {
     expect(screen.getByText('Chapter 4')).toBeInTheDocument();
   });
 
-  it('disables "Continue to Research" when no syllabus is loaded yet', () => {
+  it('disables "Begin research" when no syllabus is loaded yet', () => {
     renderPage();
-    expect(screen.getByRole('button', { name: /continue to research/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /begin research/i })).toBeDisabled();
   });
 
-  it('enables "Continue to Research" once the syllabus is in the store', () => {
+  it('enables "Begin research" once the syllabus is in the store', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(2) });
     renderPage();
-    expect(screen.getByRole('button', { name: /continue to research/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /begin research/i })).toBeEnabled();
   });
 
-  it('navigates to /research and advances the stage when "Continue to Research" is clicked', async () => {
+  it('navigates to /research and advances the stage when "Begin research" is clicked', async () => {
     const user = userEvent.setup();
     useCourseStore.setState({ syllabus: makeSyllabus(2) });
     renderPage();
 
-    await user.click(screen.getByRole('button', { name: /continue to research/i }));
+    await user.click(screen.getByRole('button', { name: /begin research/i }));
 
     expect(navigateMock).toHaveBeenCalledWith('/research');
     expect(useCourseStore.getState().completedStages).toContain('syllabus');
     expect(useCourseStore.getState().currentStage).toBe('research');
   });
 
-  it('disables "Show the Science" and "Curriculum Map" when there are no chapters yet', () => {
-    renderPage();
-    expect(screen.getByRole('button', { name: /show the science/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /curriculum map/i })).toBeDisabled();
-  });
-
-  it('enables "Show the Science" once a syllabus is loaded', () => {
+  it('"Edit brief" goes back to the setup page', async () => {
+    const user = userEvent.setup();
     useCourseStore.setState({ syllabus: makeSyllabus(2) });
     renderPage();
-    expect(screen.getByRole('button', { name: /show the science/i })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /edit brief/i }));
+
+    expect(navigateMock).toHaveBeenCalledWith('/setup');
   });
 
-  it('shows a "Read more" affordance for overviews longer than 3 sentences and expands on click', async () => {
-    const user = userEvent.setup();
+  it('offers inline editing on drafted chapters', () => {
+    useCourseStore.setState({ syllabus: makeSyllabus(2) });
+    renderPage();
+
+    expect(screen.getAllByRole('button', { name: /edit/i }).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders the full course overview', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(2, 5) });
     renderPage();
 
-    // Initially clipped to 3 sentences.
-    expect(screen.queryByText(/sentence 5\./i)).not.toBeInTheDocument();
-    const readMore = screen.getByRole('button', { name: /read more/i });
-    await user.click(readMore);
-
-    // 5th sentence is now in the DOM, Read more flipped to Show less.
+    expect(screen.getByText(/sentence 1\./i)).toBeInTheDocument();
     expect(screen.getByText(/sentence 5\./i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /show less/i })).toBeInTheDocument();
+  });
+
+  it('shows the Canvas template title editor only when a template is active', () => {
+    useCourseStore.setState({ syllabus: makeSyllabus(2) });
+    const { unmount } = renderPage();
+    expect(screen.queryByText(/template chapter titles/i)).not.toBeInTheDocument();
+    unmount();
+
+    useCourseStore.getState().updateSetup({ templateId: 'tpl-1' });
+    renderPage();
+    expect(screen.getByText(/template chapter titles/i)).toBeInTheDocument();
   });
 
   it('renders an error banner with a "Try again" link when ui.error is set', () => {
@@ -137,14 +146,5 @@ describe('<SyllabusPage />', () => {
 
     expect(screen.getByText(/model returned malformed json/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
-  });
-
-  it('shows the inline feedback prompt once the syllabus has been generated', () => {
-    useCourseStore.setState({ syllabus: makeSyllabus(2) });
-    renderPage();
-
-    // InlineFeedback's entry point — clicking it would expand the refinement
-    // textarea. Presence here confirms the refinement UI mounted.
-    expect(screen.getByRole('button', { name: /refine this syllabus/i })).toBeInTheDocument();
   });
 });
