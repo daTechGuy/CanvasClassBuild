@@ -97,9 +97,15 @@ across the instrumented modules (parser, exporters, research backends,
 services, setup components). Pages — `BuildPage`, `SyllabusPage`,
 `ExportPage`, `ResearchPage` — are not yet instrumented for unit tests.
 
+### The no-template Canvas export
+
+Without an uploaded template, "Export for Canvas (.imscc)" writes a **native Canvas course export** — the same file layout Canvas's own exporter produces (`module_meta.xml`, `wiki_content/` pages, `non_cc_assessments/` quizzes, `assessment_meta.xml`, `assignment_groups.xml`, syllabus). This matters: a package carrying Canvas's `course_settings/canvas_export.txt` marker is read by Canvas's *native* importer, which silently ignores plain Common Cartridge manifest content, so a "generic" cartridge with that marker imports with no modules, pages or quizzes.
+
+Check any cartridge offline with `python tools/validate-imscc.py file.imscc` (it flags exactly that class of problem). To test imports end to end you need a Canvas with Instructure's QTIMigrationTool installed, otherwise quizzes are skipped silently.
+
 Current coverage:
 - `tests/template-parser.test.ts` — module classification (verbatim / pattern / example-pattern), prefix detection (`Module N:`, `MN Instructor Notes:`, fully-locked `Module N Overview`), `(Example to Edit)` placeholder marker, `**EDIT**` markers, example-pattern content extraction.
-- `tests/imscc-exporter.test.ts` — manifest shape, course_settings extension files, reading webcontent, QTI 1.2 quiz emission (practice + in-class + weekly challenge), Canvas auto-publish sidecars, native discussion topics.
+- `tests/imscc-exporter.test.ts` — the native-Canvas cartridge (the no-template export): module_meta/manifest consistency, reading as a Canvas Page, both QTI flavours per quiz with correct answers, graded vs practice quizzes + assignment group, published discussions, syllabus, deterministic ids, HTML escaping, slide-deck rendering rules.
 - `tests/template-imscc-exporter.test.ts` — round-trip: build template fixture → emit IMSCC → re-parse → verify verbatim modules preserved, pattern modules replaced, `web_resources/` + `lti_resource_links/` pass through. Outline-field overrides on title / syllabus body / manifest LOM.
 - `tests/parse-outline-docx.test.ts` — outline-DOCX field extraction with the LLM mocked: clean JSON, code-fenced JSON, partial / empty / malformed responses, char-cap on long input, provider override forwarding.
 - `tests/generate-template-chapter.test.ts` — Canvas Module generation with the LLM mocked: parse success / failure / missing-required-field, few-shot exemplar embedding, no-example case, Ollama provider plumbing, Anthropic Sonnet default.

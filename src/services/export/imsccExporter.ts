@@ -111,217 +111,448 @@ function weeklyToMcqs(d: WeeklyChallengeData): ParsedMcq[] {
   return out;
 }
 
-// ── QTI 1.2 builders (Canvas-flavored, CC 1.1 profile) ──
+// ── Deterministic Canvas-style identifiers ──
+//
+// Canvas's own exporter names every object `g` + 32 hex chars. We derive ours
+// from stable seeds so re-exporting the same course yields the same ids (which
+// makes re-imports into an existing Canvas course match up instead of
+// duplicating).
 
-function qtiItem(id: string, mcq: ParsedMcq): string {
-  const choiceLabels = mcq.options
-    .map((opt, i) => {
-      const letter = String.fromCharCode(65 + i);
-      return `<response_label ident="${letter}"><material><mattext texttype="text/plain">${escXml(opt)}</mattext></material></response_label>`;
-    })
+function hash128(seed: string): string {
+  let h1 = 0xdeadbeef ^ seed.length;
+  let h2 = 0x41c6ce57 ^ seed.length;
+  let h3 = 0x9e3779b9;
+  let h4 = 0x85ebca6b;
+  for (let i = 0; i < seed.length; i++) {
+    const c = seed.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+    h3 = Math.imul(h3 ^ c, 3266489917);
+    h4 = Math.imul(h4 ^ c, 668265263);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h3 ^ (h3 >>> 13), 3266489909);
+  h3 = Math.imul(h3 ^ (h3 >>> 16), 2246822507) ^ Math.imul(h4 ^ (h4 >>> 13), 3266489909);
+  h4 = Math.imul(h4 ^ (h4 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return [h1, h2, h3, h4].map((n) => (n >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
+function gid(seed: string): string {
+  return `g${hash128(seed)}`;
+}
+
+/** Plain text -> HTML-safe text (for composing HTML fragments). */
+function escHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ── Native Canvas QTI (CC profile + Canvas's non_cc flavour) ──
+
+const QTI_NS =
+  'xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
+
+function qtiField(label: string, entry: string): string {
+  return `<qtimetadatafield><fieldlabel>${label}</fieldlabel><fieldentry>${escXml(entry)}</fieldentry></qtimetadatafield>`;
+}
+
+/**
+ * One multiple-choice item. `canvas` adds the metadata Canvas's native importer
+ * reads from non_cc_assessments (question type, points, answer ids and the
+ * back-reference to the CC-profile item).
+ */
+function qtiItem(
+  itemId: string,
+  mcq: ParsedMcq,
+  canvas?: { questionRef: string },
+): string {
+  const ids = mcq.options.map((_, i) => String(i + 1));
+  const choices = mcq.options
+    .map(
+      (opt, i) =>
+        `<response_label ident="${ids[i]}"><material><mattext texttype="text/plain">${escXml(opt)}</mattext></material></response_label>`,
+    )
     .join('');
-  const correctLetter = String.fromCharCode(65 + mcq.correctIndex);
-  const fbBlock = mcq.feedback
-    ? `<itemfeedback ident="${id}_fb"><flow_mat><material><mattext texttype="text/plain">${escXml(mcq.feedback)}</mattext></material></flow_mat></itemfeedback>`
+  const fb = mcq.feedback
+    ? `<itemfeedback ident="correct_fb"><flow_mat><material><mattext texttype="text/plain">${escXml(mcq.feedback)}</mattext></material></flow_mat></itemfeedback>` +
+      `<itemfeedback ident="general_incorrect_fb"><flow_mat><material><mattext texttype="text/plain">${escXml(mcq.feedback)}</mattext></material></flow_mat></itemfeedback>`
     : '';
-  const fbLink = mcq.feedback ? `<displayfeedback feedbacktype="Response" linkrefid="${id}_fb"/>` : '';
-  return `<item ident="${id}" title="${escXml(mcq.prompt.slice(0, 80))}">
-  <itemmetadata>
-    <qtimetadata>
-      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>multiple_choice_question</fieldentry></qtimetadatafield>
-      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
-    </qtimetadata>
-  </itemmetadata>
+  const correctFb = mcq.feedback ? '<displayfeedback feedbacktype="Response" linkrefid="correct_fb"/>' : '';
+  const incorrectFb = mcq.feedback
+    ? '<displayfeedback feedbacktype="Response" linkrefid="general_incorrect_fb"/>'
+    : '';
+  const meta = canvas
+    ? [
+        qtiField('question_type', 'multiple_choice_question'),
+        qtiField('points_possible', '1.0'),
+        qtiField('original_answer_ids', ids.join(',')),
+        qtiField('assessment_question_identifierref', canvas.questionRef),
+      ].join('')
+    : qtiField('cc_profile', 'cc.multiple_choice.v0p1');
+  const title = escXml(mcq.prompt.replace(/\s+/g, ' ').slice(0, 80));
+  return `<item ident="${itemId}" title="${title}">
+  <itemmetadata><qtimetadata>${meta}</qtimetadata></itemmetadata>
   <presentation>
-    <material><mattext texttype="text/html">${escXml(mcq.prompt)}</mattext></material>
-    <response_lid ident="response1" rcardinality="Single">
-      <render_choice>${choiceLabels}</render_choice>
-    </response_lid>
+    <material><mattext texttype="text/html">${escXml(`<div><p>${escHtml(mcq.prompt)}</p></div>`)}</mattext></material>
+    <response_lid ident="response1" rcardinality="Single"><render_choice>${choices}</render_choice></response_lid>
   </presentation>
   <resprocessing>
     <outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>
     <respcondition continue="No">
-      <conditionvar><varequal respident="response1">${correctLetter}</varequal></conditionvar>
+      <conditionvar><varequal respident="response1">${ids[mcq.correctIndex]}</varequal></conditionvar>
       <setvar action="Set" varname="SCORE">100</setvar>
-      ${fbLink}
+      ${correctFb}
+    </respcondition>
+    <respcondition continue="Yes">
+      <conditionvar><other/></conditionvar>
+      ${incorrectFb}
     </respcondition>
   </resprocessing>
-  ${fbBlock}
+  ${fb}
 </item>`;
 }
 
-function qtiAssessment(assessmentId: string, title: string, mcqs: ParsedMcq[]): string {
-  const items = mcqs.map((m, i) => qtiItem(`${assessmentId}_Q${i + 1}`, m)).join('\n');
+/** The standard CC-profile assessment (what generic LMSes read). */
+function qtiAssessmentCc(quizId: string, title: string, mcqs: ParsedMcq[]): string {
+  const items = mcqs.map((m, i) => qtiItem(gid(`${quizId}:q:${i}`), m)).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_qtiasiv1p2p1_v1p0.xsd">
-  <assessment ident="${assessmentId}" title="${escXml(title)}">
+<questestinterop ${QTI_NS} xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_qtiasiv1p2p1_v1p0.xsd">
+  <assessment ident="${quizId}" title="${escXml(title)}">
+    <qtimetadata>
+      ${qtiField('cc_profile', 'cc.exam.v0p1')}
+      ${qtiField('qmd_assessmenttype', 'Examination')}
+      ${qtiField('qmd_scoretype', 'Percentage')}
+      ${qtiField('cc_maxattempts', '1')}
+    </qtimetadata>
     <section ident="root_section">${items}</section>
   </assessment>
 </questestinterop>`;
 }
 
-// ── Manifest assembly ──
-
-interface ResourceRecord {
-  id: string;
-  type: string;
-  href: string;
-  files: string[];
-  title: string;
-}
-
-interface ChapterModule {
-  number: number;
-  title: string;
-  resources: ResourceRecord[];
-}
-
-const QTI_RESOURCE_TYPE = 'imsqti_xmlv1p2/imscc_xmlv1p1/assessment';
-const DISCUSSION_RESOURCE_TYPE = 'imsdt_xmlv1p1';
-
-// ── Discussion topic builder (IMS DT 1.1, CC 1.1 profile) ──
-
-function discussionTopicXml(title: string, body: string): string {
+/** Canvas's native flavour (non_cc_assessments/<id>.xml.qti) — read by the native importer. */
+function qtiAssessmentNative(quizId: string, title: string, mcqs: ParsedMcq[]): string {
+  const items = mcqs
+    .map((m, i) =>
+      qtiItem(gid(`${quizId}:nq:${i}`), m, { questionRef: gid(`${quizId}:q:${i}`) }),
+    )
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<topic xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imsdt_v1p2_v1p0.xsd">
-  <title>${escXml(title)}</title>
-  <text texttype="text/html">${escXml(body)}</text>
-</topic>`;
+<questestinterop ${QTI_NS} xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/xsd/ims_qtiasiv1p2p1.xsd">
+  <assessment ident="${quizId}" title="${escXml(title)}">
+    <qtimetadata>${qtiField('cc_maxattempts', '1')}</qtimetadata>
+    <section ident="root_section">${items}</section>
+  </assessment>
+</questestinterop>`;
 }
 
-// ── Canvas auto-publish extensions ──
-//
-// Canvas's CC importer drops every quiz and discussion in as `unpublished` by
-// default. The instructor has to bulk-publish via Modules → ⋮ menu after
-// import. To work around that, Canvas's own exporter writes a sidecar XML
-// file alongside each quiz / discussion in the cartridge using the
-// proprietary `http://canvas.instructure.com/xsd/cccv1p0` namespace. Including
-// these sidecars with `<workflow_state>published</workflow_state>` flips the
-// imported items to published state.
-//
-// This is undocumented and may break with Canvas updates, but it's the
-// canonical workaround used by every Canvas-CC tool I've seen. If a future
-// Canvas release drops support, the cartridge still imports cleanly — just
-// reverts to the manual-publish behavior we already have.
+// ── Canvas-namespace metadata files ──
 
-function assessmentMetaXml(
-  assessmentId: string,
-  title: string,
-  pointsPossible: number,
-): string {
+const CANVAS_NS =
+  'xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd"';
+
+type QuizKind = 'practice_quiz' | 'assignment';
+
+function assessmentMetaXml(opts: {
+  quizId: string;
+  title: string;
+  points: number;
+  kind: QuizKind;
+  assignmentId: string;
+  groupId: string;
+}): string {
+  const { quizId, title, points, kind, assignmentId, groupId } = opts;
+  const pts = points.toFixed(1);
+  const assignment =
+    kind === 'assignment'
+      ? `
+  <assignment identifier="${assignmentId}">
+    <title>${escXml(title)}</title>
+    <due_at/>
+    <lock_at/>
+    <unlock_at/>
+    <module_locked>false</module_locked>
+    <assignment_group_identifierref>${groupId}</assignment_group_identifierref>
+    <workflow_state>published</workflow_state>
+    <assignment_overrides>
+    </assignment_overrides>
+    <quiz_identifierref>${quizId}</quiz_identifierref>
+    <allowed_extensions></allowed_extensions>
+    <has_group_category>false</has_group_category>
+    <points_possible>${pts}</points_possible>
+    <grading_type>points</grading_type>
+    <all_day>false</all_day>
+    <submission_types>online_quiz</submission_types>
+    <position>1</position>
+    <omit_from_final_grade>false</omit_from_final_grade>
+    <hide_in_gradebook>false</hide_in_gradebook>
+    <only_visible_to_overrides>false</only_visible_to_overrides>
+    <post_policy>
+      <post_manually>false</post_manually>
+    </post_policy>
+  </assignment>
+  <assignment_group_identifierref>${groupId}</assignment_group_identifierref>`
+      : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<quiz identifier="${escXml(assessmentId)}" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
+<quiz identifier="${quizId}" ${CANVAS_NS}>
   <title>${escXml(title)}</title>
-  <description/>
-  <quiz_type>assignment</quiz_type>
-  <points_possible>${pointsPossible.toFixed(1)}</points_possible>
-  <allowed_attempts>-1</allowed_attempts>
+  <description></description>
+  <shuffle_answers>false</shuffle_answers>
   <scoring_policy>keep_highest</scoring_policy>
+  <hide_results></hide_results>
+  <quiz_type>${kind}</quiz_type>
+  <points_possible>${pts}</points_possible>
+  <require_lockdown_browser>false</require_lockdown_browser>
+  <require_lockdown_browser_for_results>false</require_lockdown_browser_for_results>
+  <require_lockdown_browser_monitor>false</require_lockdown_browser_monitor>
+  <lockdown_browser_monitor_data/>
   <show_correct_answers>true</show_correct_answers>
-  <published>true</published>
-  <workflow_state>published</workflow_state>
+  <anonymous_submissions>false</anonymous_submissions>
+  <could_be_locked>true</could_be_locked>
+  <disable_timer_autosubmission>false</disable_timer_autosubmission>
+  <allowed_attempts>${kind === 'practice_quiz' ? '-1' : '1'}</allowed_attempts>
+  <one_question_at_a_time>false</one_question_at_a_time>
+  <cant_go_back>false</cant_go_back>
+  <available>true</available>
+  <one_time_results>false</one_time_results>
+  <show_correct_answers_last_attempt>false</show_correct_answers_last_attempt>
+  <only_visible_to_overrides>false</only_visible_to_overrides>
   <module_locked>false</module_locked>
-  <assignment_overrides/>
+  <assignment_overrides>
+  </assignment_overrides>${assignment}
 </quiz>`;
 }
 
-function topicMetaXml(topicId: string, title: string): string {
+function discussionTopicXml(title: string, bodyHtml: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
-<topicMeta identifier="${escXml(topicId)}_meta" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">
-  <topic_id>${escXml(topicId)}</topic_id>
+<topic xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1  http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imsdt_v1p1.xsd">
   <title>${escXml(title)}</title>
+  <text texttype="text/html">${escXml(bodyHtml)}</text>
+</topic>`;
+}
+
+function topicMetaXml(metaId: string, topicId: string, title: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<topicMeta identifier="${metaId}" ${CANVAS_NS}>
+  <topic_id>${topicId}</topic_id>
+  <title>${escXml(title)}</title>
+  <position/>
   <type>topic</type>
   <discussion_type>threaded</discussion_type>
+  <has_group_category>false</has_group_category>
   <workflow_state>active</workflow_state>
-  <published>true</published>
-  <pinned>false</pinned>
-  <require_initial_post>false</require_initial_post>
+  <module_locked>false</module_locked>
+  <allow_rating>false</allow_rating>
+  <only_graders_can_rate>false</only_graders_can_rate>
+  <sort_by_rating>false</sort_by_rating>
+  <sort_order>desc</sort_order>
+  <sort_order_locked>false</sort_order_locked>
+  <expanded>false</expanded>
+  <expanded_locked>false</expanded_locked>
+  <todo_date/>
 </topicMeta>`;
 }
 
-// ── Canvas course-settings extension ──
-// Canvas-proprietary; surfaces the course title and pushes the description
-// into the Syllabus tab body (which IS visible to enrolled students, unlike
-// the LOM <description> in the manifest which only shows in Course Details).
-//
-// Canvas's own CC exporter uses a separate `syllabus.html` file rather than
-// an inline `<syllabus_body>` field, and points the resource href at the
-// `canvas_export.txt` sentinel rather than the settings XML. Matching that
-// convention is what gets the description picked up on import.
-const COURSE_SETTINGS_RESOURCE_TYPE =
-  'associatedcontent/imscc_xmlv1p1/learning-application-resource';
-
-function buildCourseSettingsXml(syllabus: Syllabus): string {
-  const courseId = `classbuild-${slug(syllabus.courseTitle) || 'course'}`;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<course identifier="${escXml(courseId)}" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 http://canvas.instructure.com/xsd/cccv1p0.xsd">
-  <title>${escXml(syllabus.courseTitle)}</title>
-  <storage_quota>524288000</storage_quota>
-  <is_public>false</is_public>
-</course>`;
-}
-
-function buildSyllabusHtml(syllabus: Syllabus): string {
-  const overview = escXml(syllabus.courseOverview || '');
-  return `<!DOCTYPE html>
-<html>
+function pageHtml(pageId: string, title: string, bodyHtml: string): string {
+  return `<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>${escXml(syllabus.courseTitle)}</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>${escXml(title)}</title>
+<meta name="identifier" content="${pageId}"/>
+<meta name="workflow_state" content="active"/>
 </head>
 <body>
-  <p>${overview}</p>
+${bodyHtml}
 </body>
 </html>`;
 }
 
-function buildManifest(
-  syllabus: Syllabus,
-  modules: ChapterModule[],
-  extraResources: ResourceRecord[],
-  settingsResources: ResourceRecord[],
-): string {
-  const courseId = `classbuild-${slug(syllabus.courseTitle) || 'course'}`;
+/**
+ * Canvas Pages can't carry <script>/<style> (its sanitizer strips them on
+ * import), so reduce the standalone reading document to its body markup. The
+ * original interactive HTML is shipped alongside as a file.
+ */
+function readingBodyHtml(html: string): string {
+  const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const body = m ? m[1] : html;
+  return body
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<link[^>]*>/gi, '')
+    .trim();
+}
 
-  const moduleItems = modules
-    .map((m) => {
-      const subItems = m.resources
+// ── Cartridge model ──
+
+type ModuleItemType = 'WikiPage' | 'Quizzes::Quiz' | 'DiscussionTopic' | 'Attachment';
+
+interface ModuleItem {
+  id: string;
+  type: ModuleItemType;
+  title: string;
+  /** Manifest resource this item points at. */
+  refId: string;
+}
+
+interface CourseModule {
+  id: string;
+  title: string;
+  items: ModuleItem[];
+}
+
+interface FileRecord {
+  id: string;
+  displayName: string;
+}
+
+const LEARNING_APP_TYPE = 'associatedcontent/imscc_xmlv1p1/learning-application-resource';
+const QTI_RESOURCE_TYPE = 'imsqti_xmlv1p2/imscc_xmlv1p1/assessment';
+const DISCUSSION_RESOURCE_TYPE = 'imsdt_xmlv1p1';
+
+function resourceXml(opts: {
+  id: string;
+  type: string;
+  href?: string;
+  files: string[];
+  dependencies?: string[];
+  intendeduse?: string;
+}): string {
+  const href = opts.href ? ` href="${escXml(opts.href)}"` : '';
+  const use = opts.intendeduse ? ` intendeduse="${opts.intendeduse}"` : '';
+  const files = opts.files.map((f) => `<file href="${escXml(f)}"/>`).join('');
+  const deps = (opts.dependencies ?? []).map((d) => `<dependency identifierref="${d}"/>`).join('');
+  return `<resource identifier="${opts.id}" type="${opts.type}"${href}${use}>${files}${deps}</resource>`;
+}
+
+function moduleMetaXml(modules: CourseModule[]): string {
+  const mods = modules
+    .map((m, mi) => {
+      const items = m.items
         .map(
-          (r) =>
-            `<item identifier="I_${r.id}" identifierref="${r.id}"><title>${escXml(r.title)}</title></item>`,
+          (it, ii) => `
+      <item identifier="${it.id}">
+        <content_type>${it.type}</content_type>
+        <workflow_state>active</workflow_state>
+        <title>${escXml(it.title)}</title>
+        <identifierref>${it.refId}</identifierref>
+        <position>${ii + 1}</position>
+        <new_tab/>
+        <indent>0</indent>
+        <link_settings_json>null</link_settings_json>
+      </item>`,
         )
         .join('');
-      return `<item identifier="M_${m.number}"><title>${escXml(`Chapter ${m.number}: ${m.title}`)}</title>${subItems}</item>`;
+      return `
+  <module identifier="${m.id}">
+    <title>${escXml(m.title)}</title>
+    <workflow_state>active</workflow_state>
+    <position>${mi + 1}</position>
+    <locked>false</locked>
+    <items>${items}
+    </items>
+  </module>`;
     })
     .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<modules ${CANVAS_NS}>${mods}
+</modules>`;
+}
 
-  const extraItems = extraResources
+function courseSettingsXml(courseId: string, syllabus: Syllabus): string {
+  const code = slug(syllabus.courseTitle).toUpperCase().slice(0, 20) || 'COURSE';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<course identifier="${courseId}" ${CANVAS_NS}>
+  <title>${escXml(syllabus.courseTitle)}</title>
+  <course_code>${escXml(code)}</course_code>
+  <start_at/>
+  <conclude_at/>
+  <allow_student_wiki_edits>false</allow_student_wiki_edits>
+  <lock_all_announcements>false</lock_all_announcements>
+  <allow_student_organized_groups>true</allow_student_organized_groups>
+  <default_view>modules</default_view>
+  <usage_rights_required>false</usage_rights_required>
+  <restrict_student_future_view>false</restrict_student_future_view>
+  <restrict_student_past_view>false</restrict_student_past_view>
+  <homeroom_course>false</homeroom_course>
+  <conditional_release>false</conditional_release>
+  <grading_standard_enabled>false</grading_standard_enabled>
+  <storage_quota>500000000</storage_quota>
+  <default_post_policy>
+    <post_manually>false</post_manually>
+  </default_post_policy>
+</course>`;
+}
+
+function assignmentGroupsXml(groupId: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<assignmentGroups ${CANVAS_NS}>
+  <assignmentGroup identifier="${groupId}">
+    <title>Assignments</title>
+    <position>1</position>
+    <group_weight>0.0</group_weight>
+  </assignmentGroup>
+</assignmentGroups>`;
+}
+
+function filesMetaXml(files: FileRecord[]): string {
+  const entries = files
     .map(
-      (r) =>
-        `<item identifier="I_${r.id}" identifierref="${r.id}"><title>${escXml(r.title)}</title></item>`,
+      (f) => `
+    <file identifier="${f.id}">
+      <display_name>${escXml(f.displayName)}</display_name>
+      <category>uncategorized</category>
+    </file>`,
     )
     .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<fileMeta ${CANVAS_NS}>
+  <files>${entries}
+  </files>
+</fileMeta>`;
+}
 
-  // settingsResources intentionally do NOT appear in the organization tree —
-  // they are LMS-side configuration, not module content.
-  const allResources = [
-    ...modules.flatMap((m) => m.resources),
-    ...extraResources,
-    ...settingsResources,
-  ];
-  const resourceXml = allResources
-    .map((r) => {
-      const files = r.files.map((f) => `<file href="${escXml(f)}"/>`).join('');
-      return `<resource identifier="${r.id}" type="${r.type}" href="${escXml(r.href)}">${files}</resource>`;
+function syllabusHtml(syllabus: Syllabus): string {
+  const overview = syllabus.courseOverview
+    ? `<p>${escHtml(syllabus.courseOverview)}</p>`
+    : '';
+  const outline = syllabus.chapters.length
+    ? `<h3>Course outline</h3><ol>${syllabus.chapters
+        .map((c) => `<li>${escHtml(c.title)}</li>`)
+        .join('')}</ol>`
+    : '';
+  return `<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>Syllabus</title>
+</head>
+<body>
+<h2>${escHtml(syllabus.courseTitle)}</h2>${overview}${outline}
+</body>
+</html>`;
+}
+
+function manifestXml(opts: {
+  courseId: string;
+  settingsId: string;
+  syllabus: Syllabus;
+  modules: CourseModule[];
+  resources: string[];
+}): string {
+  const { courseId, syllabus, modules, resources } = opts;
+  const orgItems = modules
+    .map((m) => {
+      const kids = m.items
+        .map(
+          (it) =>
+            `<item identifier="${it.id}" identifierref="${it.refId}"><title>${escXml(it.title)}</title></item>`,
+        )
+        .join('');
+      return `<item identifier="${m.id}"><title>${escXml(m.title)}</title>${kids}</item>`;
     })
     .join('');
-
   return `<?xml version="1.0" encoding="UTF-8"?>
-<manifest identifier="${escXml(courseId)}"
-  xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"
-  xmlns:lomimscc="http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imscp_v1p2_v1p0.xsd http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest http://www.imsglobal.org/profile/cc/ccv1p1/LOM/ccv1p1_lommanifest_v1p0.xsd">
+<manifest identifier="${courseId}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1" xmlns:lom="http://ltsc.ieee.org/xsd/imsccv1p1/LOM/resource" xmlns:lomimscc="http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/profile/cc/ccv1p1/ccv1p1_imscp_v1p2_v1p0.xsd http://ltsc.ieee.org/xsd/imsccv1p1/LOM/resource http://www.imsglobal.org/profile/cc/ccv1p1/LOM/ccv1p1_lomresource_v1p0.xsd http://ltsc.ieee.org/xsd/imsccv1p1/LOM/manifest http://www.imsglobal.org/profile/cc/ccv1p1/LOM/ccv1p1_lommanifest_v1p0.xsd">
   <metadata>
     <schema>IMS Common Cartridge</schema>
     <schemaversion>1.1.0</schemaversion>
@@ -333,11 +564,11 @@ function buildManifest(
     </lomimscc:lom>
   </metadata>
   <organizations>
-    <organization identifier="O_1" structure="rooted-hierarchy">
-      <item identifier="LearningModules">${moduleItems}${extraItems}</item>
+    <organization identifier="org_1" structure="rooted-hierarchy">
+      <item identifier="LearningModules">${orgItems}</item>
     </organization>
   </organizations>
-  <resources>${resourceXml}</resources>
+  <resources>${resources.join('')}</resources>
 </manifest>`;
 }
 
@@ -363,12 +594,19 @@ export interface ImsccOptions {
 }
 
 /**
- * Bundle a generated course into a Common Cartridge 1.1 (.imscc) Blob suitable
- * for import into Canvas LMS. Each chapter becomes a learning module containing
- * the reading (HTML), practice quiz (QTI + interactive HTML), in-class quiz
- * (QTI), weekly challenge (QTI MCQ subset + interactive HTML), slides (PPTX),
- * and infographic (JPG). Audio is skipped because blob URLs are non-persistent
- * — same constraint as the existing ZIP exporter.
+ * Bundle a generated course into a **native Canvas course export** (a Common
+ * Cartridge 1.1 package in the exact shape Canvas's own exporter writes), so
+ * Canvas rebuilds the course faithfully on import:
+ *
+ *  - one published Module per chapter, in order;
+ *  - the reading as a Canvas Page (plus the original interactive HTML as a file);
+ *  - Practice quiz (ungraded practice quiz), In-class quiz and Weekly challenge
+ *    (graded, in an "Assignments" group), all published, with correct answers;
+ *  - discussions (published), slides / infographic / teaching pack as files;
+ *  - the course title and a Syllabus page.
+ *
+ * Shape verified against Canvas's own exporter and an import into a live Canvas.
+ * Audio is skipped because blob URLs are non-persistent.
  */
 export async function assembleImscc(
   syllabus: Syllabus,
@@ -378,92 +616,152 @@ export async function assembleImscc(
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
 
-  const modules: ChapterModule[] = [];
+  const courseId = gid(`course:${slug(syllabus.courseTitle) || 'course'}`);
+  const settingsId = gid(`${courseId}:settings`);
+  const groupId = gid(`${courseId}:assignment-group`);
+
+  const modules: CourseModule[] = [];
+  const resources: string[] = [];
+  const fileRecords: FileRecord[] = [];
+
+  /** Add a binary/text file as a web_resources download + module item. */
+  const addFile = (
+    mod: CourseModule,
+    seed: string,
+    folder: string,
+    fileName: string,
+    data: Blob | string,
+    itemTitle: string,
+    options?: { base64?: boolean },
+  ) => {
+    const id = gid(`${courseId}:file:${seed}`);
+    const href = `web_resources/${folder}/${fileName}`;
+    zip.file(href, data, options?.base64 ? { base64: true } : undefined);
+    resources.push(resourceXml({ id, type: 'webcontent', href, files: [href] }));
+    fileRecords.push({ id, displayName: fileName });
+    mod.items.push({ id: gid(`${id}:item`), type: 'Attachment', title: itemTitle, refId: id });
+  };
+
+  const addQuiz = (
+    mod: CourseModule,
+    seed: string,
+    title: string,
+    mcqs: ParsedMcq[],
+    kind: QuizKind,
+  ) => {
+    const quizId = gid(`${courseId}:quiz:${seed}`);
+    const metaResId = gid(`${quizId}:meta`);
+    const qtiPath = `${quizId}/assessment_qti.xml`;
+    const metaPath = `${quizId}/assessment_meta.xml`;
+    const nativePath = `non_cc_assessments/${quizId}.xml.qti`;
+    zip.file(qtiPath, qtiAssessmentCc(quizId, title, mcqs));
+    zip.file(nativePath, qtiAssessmentNative(quizId, title, mcqs));
+    zip.file(
+      metaPath,
+      assessmentMetaXml({
+        quizId,
+        title,
+        points: mcqs.length,
+        kind,
+        assignmentId: gid(`${quizId}:assignment`),
+        groupId,
+      }),
+    );
+    resources.push(
+      resourceXml({ id: quizId, type: QTI_RESOURCE_TYPE, files: [qtiPath], dependencies: [metaResId] }),
+      resourceXml({
+        id: metaResId,
+        type: LEARNING_APP_TYPE,
+        href: metaPath,
+        files: [metaPath, nativePath],
+      }),
+    );
+    mod.items.push({ id: gid(`${quizId}:item`), type: 'Quizzes::Quiz', title, refId: quizId });
+  };
 
   for (const ch of chapters) {
     const folder = `chapter-${ch.number}-${slug(ch.title)}`;
-    const mod: ChapterModule = { number: ch.number, title: ch.title, resources: [] };
+    const mod: CourseModule = {
+      id: gid(`${courseId}:module:${ch.number}`),
+      title: `Chapter ${ch.number}: ${ch.title}`,
+      items: [],
+    };
 
-    // 1. Reading HTML
+    // 1. Reading → native Canvas Page. (The standalone document's <style> and
+    // <script> can't survive Canvas's sanitizer, so the page carries the body
+    // markup; the full interactive HTML is attached further down.)
     if (ch.htmlContent) {
-      const href = `${folder}/reading.html`;
-      zip.file(href, ch.htmlContent);
-      mod.resources.push({
-        id: `R_${ch.number}_reading`,
-        type: 'webcontent',
-        href,
-        files: [href],
-        title: `${ch.title} — Reading`,
-      });
+      const pageId = gid(`${courseId}:page:${ch.number}:reading`);
+      const title = `${ch.title} — Reading`;
+      const href = `wiki_content/${folder}-reading.html`;
+      zip.file(href, pageHtml(pageId, title, readingBodyHtml(ch.htmlContent)));
+      resources.push(resourceXml({ id: pageId, type: 'webcontent', href, files: [href] }));
+      mod.items.push({ id: gid(`${pageId}:item`), type: 'WikiPage', title, refId: pageId });
     }
 
-    // 2. Practice quiz → QTI only. The interactive HTML version is a single-
-    // page app and Canvas's Page sanitizer strips its scripts on import, so
-    // shipping it as a webcontent resource produces a broken page. The
-    // standalone "Publish Course" HTML viewer is the right home for the
-    // interactive UX.
+    // 2. Practice quiz → ungraded Practice Quiz.
     if (ch.practiceQuizData) {
       const mcqs = parsePracticeQuizMarkdown(ch.practiceQuizData);
       if (mcqs.length > 0) {
-        const assessmentId = `A_${ch.number}_practice`;
-        const quizTitle = `${ch.title} — Practice Quiz`;
-        const xmlPath = `${folder}/practice-quiz.xml`;
-        const metaPath = `${folder}/practice-quiz-meta.xml`;
-        zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
-        zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
-        mod.resources.push({
-          id: `R_${ch.number}_practice_qti`,
-          type: QTI_RESOURCE_TYPE,
-          href: xmlPath,
-          files: [xmlPath, metaPath],
-          title: quizTitle,
-        });
+        addQuiz(mod, `${ch.number}:practice`, `${ch.title} — Practice Quiz`, mcqs, 'practice_quiz');
       }
     }
 
-    // 3. In-class quiz → QTI
+    // 3. In-class quiz → graded quiz.
     if (ch.inClassQuizData && ch.inClassQuizData.length > 0) {
-      const mcqs = ch.inClassQuizData.map(inClassToMcq);
-      const assessmentId = `A_${ch.number}_inclass`;
-      const quizTitle = `${ch.title} — In-Class Quiz`;
-      const xmlPath = `${folder}/in-class-quiz.xml`;
-      const metaPath = `${folder}/in-class-quiz-meta.xml`;
-      zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
-      zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
-      mod.resources.push({
-        id: `R_${ch.number}_inclass_qti`,
-        type: QTI_RESOURCE_TYPE,
-        href: xmlPath,
-        files: [xmlPath, metaPath],
-        title: quizTitle,
-      });
+      addQuiz(
+        mod,
+        `${ch.number}:inclass`,
+        `${ch.title} — In-Class Quiz`,
+        ch.inClassQuizData.map(inClassToMcq),
+        'assignment',
+      );
     }
 
-    // 4. Weekly challenge → QTI only (MCQ subset; non-MCQ types are skipped).
-    // Same Canvas-Page-sanitizer constraint as the practice quiz — the rich
-    // interactive HTML version cannot survive import as a Page.
+    // 4. Weekly challenge → graded quiz (MCQ subset; other types are skipped).
     if (ch.weeklyChallengeData) {
       const mcqs = weeklyToMcqs(ch.weeklyChallengeData);
       if (mcqs.length > 0) {
-        const assessmentId = `A_${ch.number}_challenge`;
-        const quizTitle = `Week ${ch.number} Challenge — ${ch.title}`;
-        const xmlPath = `${folder}/weekly-challenge.xml`;
-        const metaPath = `${folder}/weekly-challenge-meta.xml`;
-        zip.file(xmlPath, qtiAssessment(assessmentId, quizTitle, mcqs));
-        zip.file(metaPath, assessmentMetaXml(assessmentId, quizTitle, mcqs.length));
-        mod.resources.push({
-          id: `R_${ch.number}_challenge_qti`,
-          type: QTI_RESOURCE_TYPE,
-          href: xmlPath,
-          files: [xmlPath, metaPath],
-          title: quizTitle,
-        });
+        addQuiz(
+          mod,
+          `${ch.number}:challenge`,
+          `Week ${ch.number} Challenge — ${ch.title}`,
+          mcqs,
+          'assignment',
+        );
       }
     }
 
-    // 5. Slides PPTX (file resource — Canvas attaches as a downloadable file).
-    // Only when every imagePrompt slide is already rendered this session
-    // (rendered images aren't persisted across reloads) — see openaiApiKey.
+    // 5. Discussion prompts → native Canvas Discussions (one per prompt).
+    if (ch.discussionData && ch.discussionData.length > 0) {
+      ch.discussionData.forEach((d, i) => {
+        const idx = i + 1;
+        const title = `${ch.title} — Discussion ${idx}: ${d.hook}`;
+        const body = `<p><strong>[${escHtml(d.hook)}]</strong></p><p>${escHtml(d.prompt)}</p>`;
+        const topicId = gid(`${courseId}:topic:${ch.number}:${idx}`);
+        const metaId = gid(`${topicId}:meta`);
+        zip.file(`${topicId}.xml`, discussionTopicXml(title, body));
+        zip.file(`${metaId}.xml`, topicMetaXml(metaId, topicId, title));
+        resources.push(
+          resourceXml({
+            id: topicId,
+            type: DISCUSSION_RESOURCE_TYPE,
+            files: [`${topicId}.xml`],
+            dependencies: [metaId],
+          }),
+          resourceXml({
+            id: metaId,
+            type: LEARNING_APP_TYPE,
+            href: `${metaId}.xml`,
+            files: [`${metaId}.xml`],
+          }),
+        );
+        mod.items.push({ id: gid(`${topicId}:item`), type: 'DiscussionTopic', title, refId: topicId });
+      });
+    }
+
+    // 6. Slides PPTX. Only when every imagePrompt slide is already rendered this
+    // session (rendered images aren't persisted across reloads) — see openaiApiKey.
     const slidesFullyRendered =
       !!ch.slidesJson &&
       ch.slidesJson.length > 0 &&
@@ -489,39 +787,24 @@ export async function assembleImscc(
               opts.onSlideProgress?.(ch.number, current, total, phase),
           },
         );
-        const href = `${folder}/slides.pptx`;
-        zip.file(href, pptxBlob);
-        mod.resources.push({
-          id: `R_${ch.number}_slides`,
-          type: 'webcontent',
-          href,
-          files: [href],
-          title: `${ch.title} — Slides`,
-        });
+        addFile(mod, `${ch.number}:slides`, folder, 'slides.pptx', pptxBlob, `${ch.title} — Slides`);
       } catch {
         /* pptx generation failed */
       }
     }
 
-    // 6. Infographic
+    // 7. Infographic.
     if (ch.infographicDataUri) {
       const m = ch.infographicDataUri.match(/^data:[^;]+;base64,(.+)$/);
       if (m) {
-        const href = `${folder}/infographic.jpg`;
-        zip.file(href, m[1], { base64: true });
-        mod.resources.push({
-          id: `R_${ch.number}_infographic`,
-          type: 'webcontent',
-          href,
-          files: [href],
-          title: `${ch.title} — Infographic`,
+        addFile(mod, `${ch.number}:infographic`, folder, 'infographic.jpg', m[1], `${ch.title} — Infographic`, {
+          base64: true,
         });
       }
     }
 
-    // 7. Teaching resources DOCX (discussions + activities, when present).
-    // Kept alongside native discussions because the DOCX also captures the
-    // step-by-step activity guides that don't have a native Canvas analogue.
+    // 8. Teaching resources DOCX (kept alongside the native discussions because
+    // it also carries the step-by-step activity guides, which have no native analogue).
     const hasTeachingContent =
       (ch.discussionData && ch.discussionData.length > 0) ||
       (ch.activityData && ch.activityData.length > 0);
@@ -530,81 +813,87 @@ export async function assembleImscc(
         const { generateTeachingResourcesDocx } = await import('./teachingResourcesDocx');
         const docxBlob = await generateTeachingResourcesDocx(ch, syllabus);
         if (docxBlob) {
-          const href = `${folder}/teaching-resources.docx`;
-          zip.file(href, docxBlob);
-          mod.resources.push({
-            id: `R_${ch.number}_teaching`,
-            type: 'webcontent',
-            href,
-            files: [href],
-            title: `${ch.title} — Teaching Resources`,
-          });
+          addFile(
+            mod,
+            `${ch.number}:teaching`,
+            folder,
+            'teaching-resources.docx',
+            docxBlob,
+            `${ch.title} — Teaching Resources`,
+          );
         }
       } catch {
         /* docx generation failed */
       }
     }
 
-    // 8. Discussion topics → native Canvas Discussions (one per prompt).
-    if (ch.discussionData && ch.discussionData.length > 0) {
-      ch.discussionData.forEach((d, i) => {
-        const idx = i + 1;
-        const title = `${ch.title} — Discussion ${idx}: ${d.hook}`;
-        const body = `<p><strong>[${d.hook}]</strong></p><p>${d.prompt}</p>`;
-        const topicId = `R_${ch.number}_disc_${idx}`;
-        const href = `${folder}/discussions/disc-${idx}.xml`;
-        const metaHref = `${folder}/discussions/disc-${idx}-meta.xml`;
-        zip.file(href, discussionTopicXml(title, body));
-        zip.file(metaHref, topicMetaXml(topicId, title));
-        mod.resources.push({
-          id: topicId,
-          type: DISCUSSION_RESOURCE_TYPE,
-          href,
-          files: [href, metaHref],
-          title,
-        });
-      });
+    // 9. The original interactive reading, for anyone who wants the full-fidelity
+    // version (Canvas Pages drop scripts and styles).
+    if (ch.htmlContent) {
+      addFile(
+        mod,
+        `${ch.number}:reading-interactive`,
+        folder,
+        'reading-interactive.html',
+        ch.htmlContent,
+        `${ch.title} — Reading (interactive HTML, download)`,
+      );
     }
 
     modules.push(mod);
   }
 
-  const extraResources: ResourceRecord[] = [];
+  // Course-level resources.
   if (opts.curriculumCsv) {
-    const href = 'curriculum-alignment-matrix.csv';
-    zip.file(href, opts.curriculumCsv);
-    extraResources.push({
-      id: 'R_curriculum',
-      type: 'webcontent',
-      href,
-      files: [href],
-      title: 'Curriculum Alignment Matrix',
-    });
-  }
-
-  const settingsResources: ResourceRecord[] = [];
-  if (syllabus.courseOverview) {
-    const settingsHref = 'course_settings/course_settings.xml';
-    const sentinelHref = 'course_settings/canvas_export.txt';
-    const syllabusHref = 'course_settings/syllabus.html';
-    zip.file(settingsHref, buildCourseSettingsXml(syllabus));
-    zip.file(syllabusHref, buildSyllabusHtml(syllabus));
-    zip.file(
-      sentinelHref,
-      'Generated by CanvasClassBuild — Common Cartridge export for Instructure Canvas.',
+    const mod: CourseModule = {
+      id: gid(`${courseId}:module:resources`),
+      title: 'Course resources',
+      items: [],
+    };
+    addFile(
+      mod,
+      'curriculum',
+      'course',
+      'curriculum-alignment-matrix.csv',
+      opts.curriculumCsv,
+      'Curriculum Alignment Matrix',
     );
-    // Resource href points at the sentinel — matches Canvas's own CC export
-    // convention. Files list bundles all three so they're included in the ZIP.
-    settingsResources.push({
-      id: 'course_settings',
-      type: COURSE_SETTINGS_RESOURCE_TYPE,
-      href: sentinelHref,
-      files: [settingsHref, syllabusHref, sentinelHref],
-      title: 'Course Settings',
-    });
+    modules.push(mod);
   }
 
-  zip.file('imsmanifest.xml', buildManifest(syllabus, modules, extraResources, settingsResources));
+  // Course settings (native shape — same files and resource layout as Canvas's exporter).
+  zip.file('course_settings/course_settings.xml', courseSettingsXml(courseId, syllabus));
+  zip.file('course_settings/module_meta.xml', moduleMetaXml(modules));
+  zip.file('course_settings/assignment_groups.xml', assignmentGroupsXml(groupId));
+  zip.file('course_settings/files_meta.xml', filesMetaXml(fileRecords));
+  zip.file('course_settings/syllabus.html', syllabusHtml(syllabus));
+  zip.file(
+    'course_settings/canvas_export.txt',
+    'Generated by CanvasClassBuild — native Canvas course export (Common Cartridge 1.1).',
+  );
+  resources.unshift(
+    resourceXml({
+      id: `${settingsId}_syllabus`,
+      type: LEARNING_APP_TYPE,
+      href: 'course_settings/syllabus.html',
+      intendeduse: 'syllabus',
+      files: ['course_settings/syllabus.html'],
+    }),
+    resourceXml({
+      id: settingsId,
+      type: LEARNING_APP_TYPE,
+      href: 'course_settings/canvas_export.txt',
+      files: [
+        'course_settings/course_settings.xml',
+        'course_settings/module_meta.xml',
+        'course_settings/assignment_groups.xml',
+        'course_settings/files_meta.xml',
+        'course_settings/canvas_export.txt',
+      ],
+    }),
+  );
+
+  zip.file('imsmanifest.xml', manifestXml({ courseId, settingsId, syllabus, modules, resources }));
 
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
 }

@@ -146,6 +146,55 @@ for n in html_pages:
 if ext:
     warnings.append('external hosts referenced from pages (need internet in Canvas): ' + ', '.join(f'{h} x{c}' for h, c in ext.items()))
 
+# 7. Native-Canvas-format rules. A package carrying course_settings/canvas_export.txt
+# is read by Canvas's NATIVE importer, which ignores plain manifest content: modules
+# come from module_meta.xml, pages from wiki_content/, quizzes from non_cc_assessments/.
+# A cartridge that fails these still "imports" - it just silently drops the content.
+if 'course_settings/canvas_export.txt' in nameset:
+    info.append('native Canvas export marker present: applying native-format rules')
+    ids_all = set(resources)
+    if 'course_settings/module_meta.xml' not in nameset:
+        problems.append('native marker present but course_settings/module_meta.xml is missing: Canvas will create NO modules')
+    else:
+        mm = ET.fromstring(z.read('course_settings/module_meta.xml'))
+        mod_items = [e for e in mm.iter() if local(e.tag) == 'item']
+        org_ids = {e.get('identifier') for e in man.iter() if local(e.tag) == 'item'}
+        for it in mod_items:
+            ref = (next((c.text for c in it if local(c.tag) == 'identifierref'), None))
+            ctype = next((c.text for c in it if local(c.tag) == 'content_type'), None)
+            if ref not in ids_all:
+                problems.append(f'module_meta item points at unknown resource {ref}')
+            if it.get('identifier') not in org_ids:
+                warnings.append(f'module_meta item {it.get("identifier")} is not in the manifest organization')
+            if ctype not in ('WikiPage', 'Quizzes::Quiz', 'DiscussionTopic', 'Attachment', 'Assignment', 'ExternalUrl', 'ContextExternalTool', 'ContextModuleSubHeader'):
+                warnings.append(f'unusual module item content_type {ctype}')
+        info.append(f'{len([e for e in mm.iter() if local(e.tag) == "module"])} modules, {len(mod_items)} module items in module_meta.xml')
+
+    for n in [n for n in names if n.startswith('wiki_content/') and n.endswith('.html')]:
+        body = z.read(n)
+        if b'name="identifier"' not in body:
+            problems.append(f'{n}: wiki page has no <meta name="identifier">: Canvas cannot match it')
+        if re.search(rb'<script|<style', body, re.I):
+            warnings.append(f'{n}: <script>/<style> will be stripped by Canvas')
+
+    for rid, el in resources.items():
+        if el.get('type') == 'imsqti_xmlv1p2/imscc_xmlv1p1/assessment':
+            qfiles = [f.get('href') for f in el if local(f.tag) == 'file']
+            deps = [d.get('identifierref') for d in el if local(d.tag) == 'dependency']
+            meta_res = resources.get(deps[0]) if deps else None
+            if meta_res is None:
+                problems.append(f'quiz resource {rid} has no assessment_meta dependency')
+                continue
+            mfiles = [f.get('href') for f in meta_res if local(f.tag) == 'file']
+            if not any(f.startswith('non_cc_assessments/') and f.endswith('.xml.qti') for f in mfiles):
+                problems.append(f'quiz {rid}: native importer needs non_cc_assessments/<id>.xml.qti in its meta resource - quiz would import with no questions')
+            if not any(f.endswith('assessment_meta.xml') for f in mfiles):
+                problems.append(f'quiz {rid}: meta resource lacks assessment_meta.xml')
+    for n in [n for n in names if n.startswith('non_cc_assessments/') and n.endswith('.xml.qti')]:
+        t = z.read(n)
+        if b'<item ' in t and b'question_type' not in t:
+            problems.append(f'{n}: items lack the Canvas question_type metadata')
+
 print(f'== {path}')
 for i in info:
     print('  info   ', i)
