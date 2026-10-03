@@ -316,4 +316,75 @@ describe('<BuildPage />', () => {
 
     expect(screen.getByText(/generation failed for chapter 1/i)).toBeInTheDocument();
   });
+
+  describe('advanced-mode gating of batch generation', () => {
+    function seedResearched() {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(2),
+        researchDossiers: [makeDossier(1), makeDossier(2)],
+        // Chapter 1 exists so the page's auto-draft-on-mount effect stays idle.
+        chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
+      });
+    }
+
+    it('Canvas-focused mode: the batch dialog offers Canvas materials only', async () => {
+      const user = userEvent.setup();
+      seedResearched();
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /draft remaining chapters/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/build all canvas materials/i);
+      expect(dialog).toHaveTextContent(/reading, quizzes, and discussion/i);
+      expect(dialog).not.toHaveTextContent(/audiobook/i);
+    });
+
+    it('Everything mode: the batch dialog offers the full set', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ advancedMode: true });
+      seedResearched();
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /draft remaining chapters/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/build everything/i);
+      expect(dialog).toHaveTextContent(/weekly challenge, discussion, activities, audiobook, slides/i);
+    });
+
+    it('sidebar counts only the visible materials (of 4) in Canvas-focused mode, of 8 in Everything mode', () => {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
+      });
+      const { unmount } = renderPage();
+      expect(screen.getByText(/1 of 4 drafted/i)).toBeInTheDocument();
+      unmount();
+
+      useApiStore.setState({ advancedMode: true });
+      renderPage();
+      expect(screen.getByText(/1 of 8 drafted/i)).toBeInTheDocument();
+    });
+
+    it('a chapter with all four Canvas materials reads as fully drafted without the advanced ones', () => {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [
+          makeChapter({
+            number: 1,
+            title: 'Topic 1',
+            practiceQuizData: 'Q',
+            inClassQuizData: [{ question: 'q', correctAnswer: 'a', correctFeedback: 'f', distractors: [] }],
+            discussionData: [{ prompt: 'p', hook: 'h' }],
+          }),
+        ],
+      });
+      renderPage();
+
+      // Fully drafted → the sidebar swaps the "N of M" count for a ready marker.
+      expect(screen.queryByText(/of 8 drafted/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/\d of 4 drafted/i)).not.toBeInTheDocument();
+    });
+  });
 });

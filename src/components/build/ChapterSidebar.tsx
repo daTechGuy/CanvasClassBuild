@@ -1,3 +1,4 @@
+import { useApiStore } from '../../store/apiStore';
 import { useCourseStore } from '../../store/courseStore';
 
 interface ChapterSidebarProps {
@@ -28,17 +29,22 @@ function countReady(
     audioTranscript?: string;
     slidesJson?: unknown[];
   },
+  advanced: boolean,
 ): MaterialCount {
+  // Canvas-focused mode only surfaces four materials (the other tabs are
+  // hidden), so only those count toward "fully drafted".
   let count = 0;
   if (ch.htmlContent) count++;
   if (ch.practiceQuizData) count++;
   if (ch.inClassQuizData && ch.inClassQuizData.length > 0) count++;
-  if (ch.weeklyChallengeData) count++;
   if (ch.discussionData && ch.discussionData.length > 0) count++;
-  if (ch.activityData && ch.activityData.length > 0) count++;
-  if (ch.audioTranscript) count++;
-  if (ch.slidesJson && ch.slidesJson.length > 0) count++;
-  return { ready: count, total: 8 };
+  if (advanced) {
+    if (ch.weeklyChallengeData) count++;
+    if (ch.activityData && ch.activityData.length > 0) count++;
+    if (ch.audioTranscript) count++;
+    if (ch.slidesJson && ch.slidesJson.length > 0) count++;
+  }
+  return { ready: count, total: advanced ? 8 : 4 };
 }
 
 export function ChapterSidebar({
@@ -48,6 +54,7 @@ export function ChapterSidebar({
   batchCurrentChapter,
 }: ChapterSidebarProps) {
   const { syllabus, chapters, researchDossiers } = useCourseStore();
+  const advancedMode = useApiStore((st) => st.advancedMode);
 
   if (!syllabus) return null;
 
@@ -88,8 +95,8 @@ export function ChapterSidebar({
             (d) => d.chapterNumber === ch.number,
           );
           const counts = generated
-            ? countReady(generated)
-            : { ready: 0, total: 8 };
+            ? countReady(generated, advancedMode)
+            : { ready: 0, total: advancedMode ? 8 : 4 };
           const isSelected = ch.number === selectedChapterNum;
           const isBatchCurrent = batchCurrentChapter === ch.number;
           const fullyReady = counts.ready === counts.total && counts.ready > 0;

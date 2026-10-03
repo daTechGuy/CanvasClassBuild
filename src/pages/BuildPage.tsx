@@ -945,12 +945,16 @@ Teacher feedback: "${feedback}"`;
     if (!quizHtml) tasks.push(generateQuiz().catch(logFailure('quiz')));
     if (inClassQuizData.length === 0) tasks.push(generateInClassQuiz().catch(logFailure('inclass-quiz')));
     if (discussions.length === 0) tasks.push(generateDiscussion().catch(logFailure('discussion')));
-    if (activities.length === 0) tasks.push(generateActivities().catch(logFailure('activities')));
-    if (slidesData.length === 0) tasks.push(generateSlides().catch(logFailure('slides')));
-    if (!audioTranscript) tasks.push(generateAudio().catch(logFailure('audio')));
-    if (!currentChapter.weeklyChallengeData) tasks.push(generateWeeklyChallengeContent().catch(logFailure('weekly-challenge')));
+    // Advanced-only materials (hidden tabs) are not generated — and not paid
+    // for — unless "Everything" is on.
+    if (advancedMode) {
+      if (activities.length === 0) tasks.push(generateActivities().catch(logFailure('activities')));
+      if (slidesData.length === 0) tasks.push(generateSlides().catch(logFailure('slides')));
+      if (!audioTranscript) tasks.push(generateAudio().catch(logFailure('audio')));
+      if (!currentChapter.weeklyChallengeData) tasks.push(generateWeeklyChallengeContent().catch(logFailure('weekly-challenge')));
+    }
     await Promise.allSettled(tasks);
-  }, [currentChapter, syllabusChapter, syllabus, quizHtml, inClassQuizData, discussions, activities, slidesData, audioTranscript, generateQuiz, generateInClassQuiz, generateDiscussion, generateActivities, generateSlides, generateAudio, generateWeeklyChallengeContent]);
+  }, [advancedMode, currentChapter, syllabusChapter, syllabus, quizHtml, inClassQuizData, discussions, activities, slidesData, audioTranscript, generateQuiz, generateInClassQuiz, generateDiscussion, generateActivities, generateSlides, generateAudio, generateWeeklyChallengeContent]);
 
   // Keep the ref pointing at the latest generateAllOutputs so refineChapter
   // can fire a post-refine regen *after* the new chapter content has been
@@ -967,8 +971,12 @@ Teacher feedback: "${feedback}"`;
   // "Retry failed" on the end-of-run summary — fills only the holes and
   // never regenerates work that already landed.
   //
-  //   'classes'    → reading + practice quiz + in-class quiz + weekly challenge
-  //   'everything' → the above plus discussion, activities, audio, slides
+  //   'classes'    → reading + practice quiz + in-class quiz (+ weekly challenge)
+  //   'everything' → the above plus discussion (+ activities, audio, slides)
+  //
+  // Weekly challenge, activities, audio and slides are advanced-only: in the
+  // Canvas-focused mode their tabs are hidden, so the batch must not
+  // generate (and bill for) them either.
   const runBatch = useCallback(async (mode: 'everything' | 'classes') => {
     if (!syllabus) return;
     setBatchGenerating(true);
@@ -987,12 +995,15 @@ Teacher feedback: "${feedback}"`;
       const queue = syllabus.chapters.filter((ch) => {
         if (!researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)) return false;
         const ex = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-        if (!ex?.htmlContent || !ex.practiceQuizData || !(ex.inClassQuizData && ex.inClassQuizData.length > 0) || !ex.weeklyChallengeData) return true;
+        if (!ex?.htmlContent || !ex.practiceQuizData || !(ex.inClassQuizData && ex.inClassQuizData.length > 0)) return true;
+        if (advancedMode && !ex.weeklyChallengeData) return true;
         if (mode === 'everything') {
           return !(ex.discussionData && ex.discussionData.length > 0)
-            || !(ex.activityData && ex.activityData.length > 0)
-            || !ex.audioTranscript
-            || !(ex.slidesJson && ex.slidesJson.length > 0);
+            || (advancedMode && (
+              !(ex.activityData && ex.activityData.length > 0)
+              || !ex.audioTranscript
+              || !(ex.slidesJson && ex.slidesJson.length > 0)
+            ));
         }
         return false;
       });
@@ -1126,7 +1137,7 @@ Teacher feedback: "${feedback}"`;
 
         // 1d. Weekly Challenge
         existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-        if (!existing?.weeklyChallengeData) {
+        if (advancedMode && !existing?.weeklyChallengeData) {
           setBatchMaterial('Weekly Challenge');
           setBatchPhase('thinking');
           try {
@@ -1197,8 +1208,8 @@ Teacher feedback: "${feedback}"`;
             })());
           }
 
-          // Activities
-          if (!existing?.activityData || existing.activityData.length === 0) {
+          // Activities (advanced only)
+          if (advancedMode && (!existing?.activityData || existing.activityData.length === 0)) {
             parallelTasks.push((async () => {
               try {
                 const fullText = await streamWithRetry(
@@ -1223,8 +1234,8 @@ Teacher feedback: "${feedback}"`;
             })());
           }
 
-          // Audio transcript (+TTS)
-          if (!existing?.audioTranscript) {
+          // Audio transcript (+TTS) (advanced only)
+          if (advancedMode && !existing?.audioTranscript) {
             parallelTasks.push((async () => {
               try {
                 const transcript = await streamWithRetry(
@@ -1262,8 +1273,8 @@ Teacher feedback: "${feedback}"`;
             })());
           }
 
-          // Slides
-          if (!existing?.slidesJson || existing.slidesJson.length === 0) {
+          // Slides (advanced only)
+          if (advancedMode && (!existing?.slidesJson || existing.slidesJson.length === 0)) {
             parallelTasks.push((async () => {
               try {
                 const fullText = await streamWithRetry(
@@ -1312,7 +1323,7 @@ Teacher feedback: "${feedback}"`;
       setBatchMaterial(null);
       setBatchGenerating(false);
     }
-  }, [syllabus, claudeApiKey, openaiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, setBatchSummary]);
+  }, [advancedMode, syllabus, claudeApiKey, openaiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, setBatchSummary]);
 
   const generateAllClasses = useCallback(() => runBatch('classes'), [runBatch]);
   const generateEverything = useCallback(() => runBatch('everything'), [runBatch]);
@@ -1673,7 +1684,7 @@ Teacher feedback: "${feedback}"`;
             const ex = chapters.find(c => c.number === ch.number);
             return !ex?.htmlContent || !ex.practiceQuizData
               || !(ex.inClassQuizData && ex.inClassQuizData.length > 0)
-              || !ex.weeklyChallengeData;
+              || (advancedMode && !ex.weeklyChallengeData);
           }).length;
           const unresearched = syllabus.chapters.filter(
             ch => !chapters.find(c => c.number === ch.number)
@@ -1707,9 +1718,13 @@ Teacher feedback: "${feedback}"`;
                     disabled={researched === 0}
                     className="p-3 rounded-lg border border-cb-border-strong bg-cb-accent-emphasis-quiet hover:bg-cb-accent-emphasis-quiet transition-colors text-left disabled:opacity-40 disabled:cursor-default cursor-pointer"
                   >
-                    <div className="text-sm font-semibold text-cb-accent-emphasis mb-1">Build Everything</div>
+                    <div className="text-sm font-semibold text-cb-accent-emphasis mb-1">
+                      {advancedMode ? 'Build Everything' : 'Build All Canvas Materials'}
+                    </div>
                     <p className="text-xs text-cb-text-muted leading-relaxed">
-                      All materials — reading, quizzes, weekly challenge, discussion, activities, audiobook, slides.
+                      {advancedMode
+                        ? 'All materials — reading, quizzes, weekly challenge, discussion, activities, audiobook, slides.'
+                        : 'Reading, quizzes, and discussion. Turn on "Everything" in the API keys modal on Setup to also draft challenge, activities, audio and slides.'}
                       {researched >= 6 ? ' Possibly 1-2 hours.' : researched >= 3 ? ' Possibly 30-60 min.' : ' Takes a while.'}
                     </p>
                   </button>
@@ -1955,10 +1970,14 @@ Teacher feedback: "${feedback}"`;
               !quizHtml,
               inClassQuizData.length === 0,
               discussions.length === 0,
-              activities.length === 0,
-              slidesData.length === 0,
-              !audioTranscript,
-              !currentChapter.weeklyChallengeData,
+              ...(advancedMode
+                ? [
+                    activities.length === 0,
+                    slidesData.length === 0,
+                    !audioTranscript,
+                    !currentChapter.weeklyChallengeData,
+                  ]
+                : []),
             ].filter(Boolean).length;
             return (
               <div className="flex items-baseline gap-3 mb-4 flex-wrap">
