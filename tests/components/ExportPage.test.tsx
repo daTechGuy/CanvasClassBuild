@@ -1,16 +1,26 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { ExportPage } from '../../src/pages/ExportPage';
 import { useCourseStore } from '../../src/store/courseStore';
 import { useUiStore } from '../../src/store/uiStore';
-import type { Syllabus, GeneratedChapter, CurriculumMap } from '../../src/types/course';
+import { useApiStore } from '../../src/store/apiStore';
+import { assembleImscc } from '../../src/services/export/imsccExporter';
+import type { Syllabus, GeneratedChapter } from '../../src/types/course';
 
 // Keep these heavy modules out of the test path — they're only exercised on
 // click handlers and we're testing render behavior.
 vi.mock('../../src/services/claude/streaming', () => ({
   streamMessage: vi.fn(),
 }));
+
+// The cartridge build + save are exercised in their own tests; here we only
+// care how the page decides to call them.
+vi.mock('../../src/services/export/imsccExporter', () => ({
+  assembleImscc: vi.fn(async () => new Blob(['imscc'])),
+}));
+vi.mock('file-saver', () => ({ saveAs: vi.fn() }));
 
 function makeSyllabus(numChapters: number): Syllabus {
   return {
@@ -35,10 +45,20 @@ function makeChapter(overrides: Partial<GeneratedChapter> & { number: number; ti
   };
 }
 
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <ExportPage />
+    </MemoryRouter>,
+  );
+}
+
 describe('<ExportPage />', () => {
   beforeEach(() => {
     useCourseStore.getState().reset();
+    vi.mocked(assembleImscc).mockClear();
     useUiStore.setState({ error: null, isGenerating: false });
+    useApiStore.setState({ claudeApiKey: 'sk-x', advancedMode: false });
     // jsdom/happy-dom don't implement URL.createObjectURL; download handlers
     // would blow up the suite if any test wires a click on them.
     if (!('createObjectURL' in URL)) {
@@ -50,47 +70,58 @@ describe('<ExportPage />', () => {
   });
 
   it('shows an empty state when no syllabus is loaded', () => {
-    render(<ExportPage />);
-    expect(screen.getByText(/no course data available/i)).toBeInTheDocument();
+    renderPage();
+    expect(screen.getByText(/no course in progress/i)).toBeInTheDocument();
   });
 
   it('renders the course title in the header once a syllabus is loaded', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3) });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('heading', { name: /export course/i })).toBeInTheDocument();
-    expect(screen.getByText('Intro to Statistics')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Intro to Statistics' })).toBeInTheDocument();
+    expect(screen.getByText(/0 of 3 chapters drafted/i)).toBeInTheDocument();
   });
 
-  it('shows the three header actions: Publish, Download All, Export for Canvas', () => {
+  it('shows the header actions: Publish, Export for Canvas, Download, Project file', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3) });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /publish course/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /download.*classes.*zip/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /publish/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /export for canvas/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download .*zip/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /project file/i })).toBeInTheDocument();
   });
 
-  it('disables Publish / Download All / Export when no chapters are generated', () => {
+  it('disables Publish / Export for Canvas / Download when no chapters are generated', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3), chapters: [] });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /publish course/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /download.*classes.*zip/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /publish/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /export for canvas/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /download .*zip/i })).toBeDisabled();
   });
 
-  it('shows "Download N of M Classes" while not all chapters are ready', () => {
+  it('enables Export for Canvas once at least one chapter exists', () => {
+    useCourseStore.setState({
+      syllabus: makeSyllabus(3),
+      chapters: [makeChapter({ number: 1, title: 'Chapter 1' })],
+    });
+    renderPage();
+
+    expect(screen.getByRole('button', { name: /export for canvas/i })).toBeEnabled();
+  });
+
+  it('shows "Download N of M" while not all chapters are ready', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(5),
       chapters: [makeChapter({ number: 1, title: 'Chapter 1' }), makeChapter({ number: 2, title: 'Chapter 2' })],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /download 2 of 5 classes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download 2 of 5/i })).toBeInTheDocument();
   });
 
-  it('shows "Download All (ZIP)" once every chapter is generated', () => {
+  it('shows "Download all" once every chapter is generated', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
       chapters: [
@@ -98,39 +129,39 @@ describe('<ExportPage />', () => {
         makeChapter({ number: 2, title: 'Chapter 2' }),
       ],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /download all \(zip\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download all/i })).toBeInTheDocument();
   });
 
   it('renders a UI error banner when ui.error is set', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(2) });
     useUiStore.setState({ error: 'Boom — something went wrong.' });
-    render(<ExportPage />);
+    renderPage();
 
     expect(screen.getByText('Boom — something went wrong.')).toBeInTheDocument();
   });
 
-  it('shows a "Generate Class" button for chapters that have not been generated yet', () => {
+  it('shows a "Draft class" button for chapters that have not been generated yet', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(3),
       chapters: [makeChapter({ number: 1, title: 'Chapter 1' })],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    // Chapters 2 and 3 are not generated → 2 Generate Class buttons.
-    expect(screen.getAllByRole('button', { name: /generate class/i })).toHaveLength(2);
+    // Chapters 2 and 3 are not generated → 2 Draft class buttons.
+    expect(screen.getAllByRole('button', { name: /draft class/i })).toHaveLength(2);
   });
 
-  it('disables the Generate Class buttons while ui.isGenerating is true', () => {
+  it('disables the Draft class buttons while ui.isGenerating is true', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
       chapters: [],
     });
     useUiStore.setState({ isGenerating: true });
-    render(<ExportPage />);
+    renderPage();
 
-    for (const btn of screen.getAllByRole('button', { name: /generate class/i })) {
+    for (const btn of screen.getAllByRole('button', { name: /draft class/i })) {
       expect(btn).toBeDisabled();
     }
   });
@@ -140,9 +171,9 @@ describe('<ExportPage />', () => {
       syllabus: makeSyllabus(1),
       chapters: [makeChapter({ number: 1, title: 'Chapter 1' })],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /reading \(\.html\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^reading/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /practice quiz/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /slides/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /audiobook/i })).not.toBeInTheDocument();
@@ -159,9 +190,9 @@ describe('<ExportPage />', () => {
         }),
       ],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /^practice quiz$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^practice quiz/i })).toBeInTheDocument();
   });
 
   it('shows both Weekly Challenge HTML and SCORM rows when challenge data is present', () => {
@@ -175,13 +206,13 @@ describe('<ExportPage />', () => {
         }),
       ],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /weekly challenge \(\.html\)/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /weekly challenge scorm/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^weekly challenge/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /challenge scorm/i })).toBeInTheDocument();
   });
 
-  it('shows Teaching Resources row when discussions OR activities are present', () => {
+  it('shows the Teaching row when discussions OR activities are present', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       chapters: [
@@ -192,12 +223,12 @@ describe('<ExportPage />', () => {
         }),
       ],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByRole('button', { name: /teaching resources/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^teaching/i })).toBeInTheDocument();
   });
 
-  it('marks a chapter "Ready" when it has all 8 artifact types', () => {
+  it('marks a chapter ready when every artifact type is present', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       chapters: [
@@ -212,35 +243,19 @@ describe('<ExportPage />', () => {
           slidesJson: [{ title: 't', body: 'b' }] as unknown as GeneratedChapter['slidesJson'],
           audioUrl: 'blob:audio',
           discussionData: [{ prompt: 'p', hook: 'h' }],
-          infographicDataUri: 'data:image/jpeg;base64,xxx',
         }),
       ],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    expect(screen.getByText(/^ready$/i)).toBeInTheDocument();
-    expect(screen.getByText(/all files ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/all artifacts ready/i)).toBeInTheDocument();
   });
 
-  it('shows the Curriculum Alignment Matrix card only when curriculumMap is set', () => {
+  it('offers learning-outcomes generation, which replaces the old alignment-matrix card', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(2) });
-    const { rerender } = render(<ExportPage />);
-    expect(screen.queryByText(/curriculum alignment matrix/i)).not.toBeInTheDocument();
+    renderPage();
 
-    useCourseStore.setState({
-      curriculumMap: {
-        objectives: [
-          { id: 'o1', text: 'Define mean', bloomLevel: 'Remember' },
-          { id: 'o2', text: 'Compute variance', bloomLevel: 'Apply' },
-        ],
-        chapterMap: {},
-      } as unknown as CurriculumMap,
-    });
-    rerender(<ExportPage />);
-
-    expect(screen.getByText(/curriculum alignment matrix/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 learning objectives/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /download csv/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /generate learning outcomes/i })).toBeInTheDocument();
   });
 
   it('lets a user click the Reading row without crashing (smoke check on the download handler)', async () => {
@@ -249,9 +264,106 @@ describe('<ExportPage />', () => {
       syllabus: makeSyllabus(1),
       chapters: [makeChapter({ number: 1, title: 'Chapter 1' })],
     });
-    render(<ExportPage />);
+    renderPage();
 
-    await user.click(screen.getByRole('button', { name: /reading \(\.html\)/i }));
+    await user.click(screen.getByRole('button', { name: /^reading/i }));
     // No assertion needed — we're verifying the click doesn't throw.
+  });
+
+  describe('Export for Canvas — slide decks', () => {
+    const unrendered = [
+      { title: 'A', speakerNotes: '', bullets: [], imagePrompt: 'a' },
+      { title: 'B', speakerNotes: '', bullets: [], imagePrompt: 'b' },
+    ] as unknown as GeneratedChapter['slidesJson'];
+
+    function seed(slidesJson?: GeneratedChapter['slidesJson']) {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [makeChapter({ number: 1, title: 'Chapter 1', slidesJson })],
+      });
+    }
+
+    it('exports straight away when there are no unrendered decks', async () => {
+      const user = userEvent.setup();
+      seed(undefined);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({ renderMissingSlides: false });
+    });
+
+    it('asks before rendering when decks have unrendered images and a key is set', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/2 images/i);
+      expect(assembleImscc).not.toHaveBeenCalled();
+      expect(within(dialog).getByRole('button', { name: /render & include decks/i })).toBeInTheDocument();
+    });
+
+    it('"Export without decks" exports without opting in to rendering', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /export without decks/i }));
+
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({ renderMissingSlides: false });
+    });
+
+    it('"Render & include decks" opts in and passes the OpenAI key', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /render & include decks/i }));
+
+      await waitFor(() => expect(assembleImscc).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(assembleImscc).mock.calls[0][2]).toMatchObject({
+        renderMissingSlides: true,
+        openaiApiKey: 'sk-openai',
+      });
+    });
+
+    it('without an OpenAI key the dialog only offers to export without decks', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: '' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+
+      expect(within(dialog).queryByRole('button', { name: /render & include decks/i })).not.toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: /export without decks/i })).toBeInTheDocument();
+    });
+
+    it('cancelling the dialog exports nothing', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ openaiApiKey: 'sk-openai' });
+      seed(unrendered);
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /export for canvas/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+      expect(assembleImscc).not.toHaveBeenCalled();
+    });
   });
 });

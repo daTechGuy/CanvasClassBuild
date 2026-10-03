@@ -223,7 +223,13 @@ function parseManifestResourceMap(manifestText: string): Map<string, string> {
     const doc = new DOMParser().parseFromString(manifestText, 'text/xml');
     for (const el of Array.from(doc.getElementsByTagName('resource'))) {
       const id = el.getAttribute('identifier');
-      const href = el.getAttribute('href');
+      // Canvas's own exports omit `href` on discussion (imsdt) and quiz
+      // resources — the file is only listed in a <file> child. Fall back to it,
+      // otherwise those items never resolve (e.g. the example discussion).
+      const href =
+        el.getAttribute('href') ||
+        el.getElementsByTagName('file')[0]?.getAttribute('href') ||
+        undefined;
       if (id && href) map.set(id, href);
     }
   } catch {

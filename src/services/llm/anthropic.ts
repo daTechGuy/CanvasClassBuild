@@ -14,6 +14,7 @@ export async function streamMessageAnthropic(
     thinkingBudget,
     tools,
     maxTokens = 16000,
+    signal,
   } = options;
 
   const client = getClient(apiKey);
@@ -32,18 +33,34 @@ export async function streamMessageAnthropic(
     }
 
     if (thinkingBudget) {
-      params.thinking = {
-        type: 'enabled',
-        budget_tokens: getThinkingTokens(thinkingBudget),
-      };
-      params.max_tokens = Math.max(maxTokens, getThinkingTokens(thinkingBudget) + maxTokens);
+      const budgetTokens = getThinkingTokens(thinkingBudget);
+      if (model === MODELS.opus) {
+        // Opus 4.8: manual extended thinking (`budget_tokens`) is rejected on
+        // Opus 4.7+. Enable adaptive thinking and steer depth with `effort`.
+        // Adaptive thinking is OFF unless set explicitly, and the thinking summary
+        // is omitted by default — `display: 'summarized'` restores the streamed
+        // reasoning the UI shows via onThinking. SDK 0.74.0 doesn't type `display`
+        // on the adaptive config yet; the field is still sent, so cast.
+        params.thinking = { type: 'adaptive', display: 'summarized' } as Anthropic.ThinkingConfigParam;
+        params.output_config = { effort: thinkingBudget };
+        // Adaptive thinking tokens count toward max_tokens. Reserve headroom ABOVE
+        // the caller's intended output so a deep think can't truncate the answer
+        // (truncated JSON materials fail to parse and silently revert). Capped at
+        // the 128k output ceiling.
+        params.max_tokens = Math.min(128000, maxTokens + budgetTokens * 2);
+      } else {
+        // Sonnet / Haiku still accept manual extended thinking, where
+        // budget_tokens must fit inside max_tokens.
+        params.thinking = { type: 'enabled', budget_tokens: budgetTokens };
+        params.max_tokens = Math.max(maxTokens, budgetTokens + maxTokens);
+      }
     }
 
     if (tools && tools.length > 0) {
       params.tools = tools;
     }
 
-    const stream = await client.messages.stream(params);
+    const stream = await client.messages.stream(params, signal ? { signal } : undefined);
 
     const serverToolInputs = new Map<number, string>();
 
@@ -135,6 +152,7 @@ export async function sendMessageAnthropic(
     thinkingBudget,
     tools,
     maxTokens = 16000,
+    signal,
   } = options;
 
   const client = getClient(apiKey);
@@ -150,16 +168,32 @@ export async function sendMessageAnthropic(
   }
 
   if (thinkingBudget) {
-    params.thinking = {
-      type: 'enabled',
-      budget_tokens: getThinkingTokens(thinkingBudget),
-    };
-    params.max_tokens = Math.max(maxTokens, getThinkingTokens(thinkingBudget) + maxTokens);
+    const budgetTokens = getThinkingTokens(thinkingBudget);
+    if (model === MODELS.opus) {
+      // Opus 4.8: manual extended thinking (`budget_tokens`) is rejected on
+      // Opus 4.7+. Enable adaptive thinking and steer depth with `effort`.
+      // Adaptive thinking is OFF unless set explicitly, and the thinking summary
+      // is omitted by default — `display: 'summarized'` restores the streamed
+      // reasoning the UI shows via onThinking. SDK 0.74.0 doesn't type `display`
+      // on the adaptive config yet; the field is still sent, so cast.
+      params.thinking = { type: 'adaptive', display: 'summarized' } as Anthropic.ThinkingConfigParam;
+      params.output_config = { effort: thinkingBudget };
+      // Adaptive thinking tokens count toward max_tokens. Reserve headroom ABOVE
+      // the caller's intended output so a deep think can't truncate the answer
+      // (truncated JSON materials fail to parse and silently revert). Capped at
+      // the 128k output ceiling.
+      params.max_tokens = Math.min(128000, maxTokens + budgetTokens * 2);
+    } else {
+      // Sonnet / Haiku still accept manual extended thinking, where
+      // budget_tokens must fit inside max_tokens.
+      params.thinking = { type: 'enabled', budget_tokens: budgetTokens };
+      params.max_tokens = Math.max(maxTokens, budgetTokens + maxTokens);
+    }
   }
 
   if (tools && tools.length > 0) {
     params.tools = tools;
   }
 
-  return client.messages.create(params);
+  return client.messages.create(params, signal ? { signal } : undefined);
 }

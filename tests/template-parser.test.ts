@@ -283,3 +283,56 @@ describe('parseImsccTemplate', () => {
     );
   });
 });
+
+describe('parseImsccTemplate — shape of a real Canvas export', () => {
+  // Canvas's own exporter writes discussion (imsdt) and quiz resources WITHOUT an
+  // `href` attribute — the file is only listed in a <file> child. The example
+  // discussion used to be silently dropped because only `href` was consulted.
+  it('resolves the example discussion when its resource has no href attribute', async () => {
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    const ns = 'xmlns="http://canvas.instructure.com/xsd/cccv1p0"';
+    zip.file(
+      'course_settings/module_meta.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>
+<modules ${ns}>
+  <module identifier="m1"><title>Module 1: Real Topic</title><workflow_state>active</workflow_state><position>1</position>
+    <items>
+      <item identifier="i1"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Module 1 Overview</title><identifierref>r_over</identifierref><position>1</position><indent>0</indent></item>
+      <item identifier="i2"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>M1 Instructor Notes: Pacing</title><identifierref>r_notes</identifierref><position>2</position><indent>0</indent></item>
+      <item identifier="i3"><content_type>DiscussionTopic</content_type><workflow_state>active</workflow_state><title>M1 Discussion: What surprised you?</title><identifierref>r_disc</identifierref><position>3</position><indent>0</indent></item>
+    </items>
+  </module>
+</modules>`,
+    );
+    zip.file(
+      'imsmanifest.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="m" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"><resources>
+  <resource identifier="r_over" type="webcontent" href="wiki_content/over.html"><file href="wiki_content/over.html"/></resource>
+  <resource identifier="r_notes" type="webcontent" href="wiki_content/notes.html"><file href="wiki_content/notes.html"/></resource>
+  <resource identifier="r_disc" type="imsdt_xmlv1p1"><file href="r_disc.xml"/></resource>
+</resources></manifest>`,
+    );
+    zip.file('wiki_content/over.html', '<html><body><p>Overview body</p></body></html>');
+    zip.file('wiki_content/notes.html', '<html><body><p>Note body</p></body></html>');
+    zip.file(
+      'r_disc.xml',
+      `<?xml version="1.0" encoding="UTF-8"?><topic xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imsdt_v1p1"><title>M1 Discussion: What surprised you?</title><text texttype="text/html">&lt;p&gt;Share one surprising idea.&lt;/p&gt;</text></topic>`,
+    );
+
+    const t = await parseImsccTemplate({
+      file: await zip.generateAsync({ type: 'uint8array' }),
+      name: 'real-shape',
+    });
+
+    expect(t.modules[0].classification).toBe('example-pattern');
+    const ex = t.examplePatternContent!;
+    expect(ex.moduleOverviewHtml).toContain('Overview body');
+    expect(ex.instructorNotes[0].htmlContent).toContain('Note body');
+    expect(ex.discussion).toBeDefined();
+    expect(ex.discussion!.promptHtml).toContain('Share one surprising idea.');
+    expect(ex.discussion!.title).toBe('What surprised you?');
+  });
+});
+

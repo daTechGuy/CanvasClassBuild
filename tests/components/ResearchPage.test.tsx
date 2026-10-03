@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ResearchPage } from '../../src/pages/ResearchPage';
+import { runResearch } from '../../src/services/research';
 import { useCourseStore } from '../../src/store/courseStore';
 import { useApiStore } from '../../src/store/apiStore';
 import { useUiStore } from '../../src/store/uiStore';
@@ -58,6 +59,7 @@ function renderPage() {
 describe('<ResearchPage />', () => {
   beforeEach(() => {
     navigateMock.mockClear();
+    vi.mocked(runResearch).mockClear();
     useCourseStore.getState().reset();
     useUiStore.setState({ error: null, isGenerating: false });
     // Default test state: anthropic backend, no claude key → backend-not-ready
@@ -116,25 +118,42 @@ describe('<ResearchPage />', () => {
     expect(useCourseStore.getState().currentStage).toBe('build');
   });
 
-  it('renders the dossier header + chapter tabs + first chapter detail when the backend is ready', () => {
+  it('renders the dossier header + a sidebar entry per chapter when the backend is ready', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3) });
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /research dossiers/i })).toBeInTheDocument();
-    expect(screen.getByText(/0 of 3 classes researched/i)).toBeInTheDocument();
-    // First chapter's detail card.
-    expect(screen.getByRole('heading', { name: /class 1: topic 1/i })).toBeInTheDocument();
-    // Chapter tabs — one per chapter.
-    expect(screen.getByRole('button', { name: /^class 1$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^class 3$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /what does classbuild know about this material/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/0 of 3 chapters complete/i)).toBeInTheDocument();
+    // Dossier sidebar — one entry per chapter.
+    expect(screen.getByRole('button', { name: /topic 1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /topic 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /topic 3/i })).toBeInTheDocument();
   });
 
-  it('hides the Skip Research button once at least one dossier exists', () => {
-    // The auto-start effect fires research on mount whenever the backend is
-    // ready and dossiers are empty, so the "no research started" state isn't
-    // stable in a ready-backend test. We test the post-research state: once
-    // a dossier exists, Skip Research is gone.
+  it('auto-starts research for the first chapter when the backend is ready', () => {
+    useCourseStore.setState({ syllabus: makeSyllabus(2) });
+    useApiStore.setState({ claudeApiKey: 'sk-x' });
+    renderPage();
+
+    expect(runResearch).toHaveBeenCalledTimes(1);
+    expect(runResearch).toHaveBeenCalledWith(
+      'anthropic',
+      expect.objectContaining({ chapterNumber: 1, chapterTitle: 'Topic 1' }),
+      expect.any(Function),
+    );
+  });
+
+  it('does not auto-start research while the backend is not configured', () => {
+    useCourseStore.setState({ syllabus: makeSyllabus(2) });
+    renderPage();
+
+    expect(runResearch).not.toHaveBeenCalled();
+  });
+
+  it('shows Skip research only until a dossier exists', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
       researchDossiers: [makeDossier(1)],
@@ -142,11 +161,10 @@ describe('<ResearchPage />', () => {
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    const skipButtons = screen.queryAllByRole('button', { name: /^skip research$/i });
-    expect(skipButtons).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: /^skip research$/i })).toHaveLength(0);
   });
 
-  it('shows a completed dossier with source title and Verified badge', () => {
+  it('shows a completed dossier with its source and synthesis', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
       researchDossiers: [makeDossier(1)],
@@ -154,13 +172,13 @@ describe('<ResearchPage />', () => {
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    expect(screen.getByText('Smith 2020')).toBeInTheDocument();
-    expect(screen.getByText(/^verified$/i)).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /synthesis/i })).toBeInTheDocument();
+    expect(screen.getByText(/smith 2020/i)).toBeInTheDocument();
     expect(screen.getByText(/synthesis notes for chapter/i)).toBeInTheDocument();
+    // Verified sources carry no warning tag.
+    expect(screen.queryByText(/^unverified$/i)).not.toBeInTheDocument();
   });
 
-  it('shows a "Verify" badge (not "Verified") for AI-generated sources', () => {
+  it('flags AI-generated sources as unverified', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       researchDossiers: [
@@ -174,28 +192,34 @@ describe('<ResearchPage />', () => {
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    expect(screen.getByText(/^verify$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^unverified$/i)).toBeInTheDocument();
+    expect(screen.getByText(/drafted from the model's knowledge/i)).toBeInTheDocument();
   });
 
-  it('disables "Previous Class" on the first chapter and "Research Next Class" on the last', async () => {
+  it('selecting an unresearched chapter in the sidebar starts research for it', async () => {
     const user = userEvent.setup();
-    useCourseStore.setState({ syllabus: makeSyllabus(2) });
+    // A dossier already exists, so nothing auto-starts on mount.
+    useCourseStore.setState({
+      syllabus: makeSyllabus(3),
+      researchDossiers: [makeDossier(1)],
+    });
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
+    expect(runResearch).not.toHaveBeenCalled();
 
-    expect(screen.getByRole('button', { name: /previous class/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /research next class/i })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /topic 2/i }));
 
-    await user.click(screen.getByRole('button', { name: /research next class/i }));
-    expect(screen.getByRole('button', { name: /previous class/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /research next class/i })).toBeDisabled();
+    expect(runResearch).toHaveBeenCalledWith(
+      'anthropic',
+      expect.objectContaining({ chapterNumber: 2 }),
+      expect.any(Function),
+    );
   });
 
-  it('shows the empty-state Start Research button for a chapter that has no dossier yet', () => {
+  it('shows the empty-state Start research button for a chapter that has no dossier yet', () => {
     // 3 chapters, dossier already exists for chapter 2 → the auto-start
     // effect skips (researchDossiers.length !== 0). The page lands on
-    // chapter 1, which has no dossier and isn't being researched → empty
-    // state is visible.
+    // chapter 1, which has no dossier and isn't being researched.
     useCourseStore.setState({
       syllabus: makeSyllabus(3),
       researchDossiers: [makeDossier(2)],
@@ -203,11 +227,11 @@ describe('<ResearchPage />', () => {
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    expect(screen.getByText(/no research yet for this class/i)).toBeInTheDocument();
+    expect(screen.getByText(/no research yet for this chapter/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start research/i })).toBeInTheDocument();
   });
 
-  it('Continue to Build advances to build stage and navigates', async () => {
+  it('Begin build advances to the build stage and navigates', async () => {
     const user = userEvent.setup();
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
@@ -216,14 +240,14 @@ describe('<ResearchPage />', () => {
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();
 
-    await user.click(screen.getByRole('button', { name: /continue to build/i }));
+    await user.click(screen.getByRole('button', { name: /begin build/i }));
 
     expect(navigateMock).toHaveBeenCalledWith('/build');
     expect(useCourseStore.getState().completedStages).toContain('research');
     expect(useCourseStore.getState().currentStage).toBe('build');
   });
 
-  it('shows the "Research all remaining" link when more than one chapter is still unresearched', () => {
+  it('shows the "Research all remaining" button when more than one chapter is still unresearched', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(4) });
     useApiStore.setState({ claudeApiKey: 'sk-x' });
     renderPage();

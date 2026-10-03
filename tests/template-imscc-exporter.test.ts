@@ -282,3 +282,167 @@ describe('assembleTemplateImscc (round-trip)', () => {
     expect(noteItems.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+// ── Real-Canvas-shaped template: awkward-but-real features ──
+
+async function buildCanvasShapedTemplate(): Promise<Uint8Array> {
+  const zip = new JSZip();
+  const ns = 'xmlns="http://canvas.instructure.com/xsd/cccv1p0"';
+  zip.file(
+    'course_settings/module_meta.xml',
+    `<?xml version="1.0" encoding="UTF-8"?>
+<modules ${ns}>
+  <module identifier="mod_begin">
+    <title>Begin Here: Introductory Module</title>
+    <workflow_state>active</workflow_state>
+    <position>5</position>
+    <require_sequential_progress>true</require_sequential_progress>
+    <locked>false</locked>
+    <completion_requirements>
+      <completion_requirement><item_identifierref>item_welcome</item_identifierref><type>must_view</type></completion_requirement>
+    </completion_requirements>
+    <items>
+      <item identifier="item_welcome"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Welcome</title><identifierref>r_welcome</identifierref><position>1</position><new_tab/><indent>0</indent><link_settings_json>null</link_settings_json></item>
+      <item identifier="item_link"><content_type>ExternalUrl</content_type><workflow_state>unpublished</workflow_state><title>Help desk</title><identifierref>g_inline_only</identifierref><url>https://example.edu/help</url><position>2</position><new_tab>true</new_tab><indent>1</indent><link_settings_json>{"selection_width":800}</link_settings_json></item>
+      <item identifier="item_quiz"><content_type>Quizzes::Quiz</content_type><workflow_state>active</workflow_state><title>Syllabus quiz</title><identifierref>r_quiz</identifierref><position>3</position><new_tab/><indent>0</indent><link_settings_json>null</link_settings_json></item>
+    </items>
+  </module>
+  <module identifier="mod_pattern">
+    <title>Module 1: (Example to Edit)</title>
+    <workflow_state>active</workflow_state>
+    <position>6</position>
+    <items>
+      <item identifier="item_old_over"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Module 1 Overview</title><identifierref>r_old_over</identifierref><position>1</position><indent>0</indent></item>
+      <item identifier="item_old_notes"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>M1 Instructor Notes: (Example to Edit)</title><identifierref>r_old_notes</identifierref><position>2</position><indent>0</indent></item>
+      <item identifier="item_old_disc"><content_type>DiscussionTopic</content_type><workflow_state>active</workflow_state><title>M1 Discussion: (Example to Edit)</title><identifierref>r_old_disc</identifierref><position>3</position><indent>0</indent></item>
+    </items>
+  </module>
+</modules>`,
+  );
+  zip.file(
+    'imsmanifest.xml',
+    `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="tpl" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1">
+  <organizations><organization identifier="org_1" structure="rooted-hierarchy">
+    <item identifier="LearningModules">
+      <item identifier="mod_begin"><title>Begin Here: Introductory Module</title>
+        <item identifier="item_welcome" identifierref="r_welcome"><title>Welcome</title></item>
+        <item identifier="item_link" identifierref="r_weblink"><title>Help desk</title></item>
+        <item identifier="item_quiz" identifierref="r_quiz"><title>Syllabus quiz</title></item>
+      </item>
+      <item identifier="mod_pattern"><title>Module 1: (Example to Edit)</title>
+        <item identifier="item_old_over" identifierref="r_old_over"><title>Module 1 Overview</title></item>
+        <item identifier="item_old_notes" identifierref="r_old_notes"><title>M1 Instructor Notes: (Example to Edit)</title></item>
+        <item identifier="item_old_disc" identifierref="r_old_disc"><title>M1 Discussion: (Example to Edit)</title></item>
+      </item>
+    </item>
+  </organization></organizations>
+  <resources>
+    <resource identifier="r_syll" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="course_settings/syllabus.html" intendeduse="syllabus"><file href="course_settings/syllabus.html"/></resource>
+    <resource identifier="r_welcome" type="webcontent" href="wiki_content/welcome.html"><file href="wiki_content/welcome.html"/></resource>
+    <resource identifier="r_weblink" type="imswl_xmlv1p1"><file href="r_weblink.xml"/></resource>
+    <resource identifier="r_quiz" type="imsqti_xmlv1p2/imscc_xmlv1p1/assessment"><file href="r_quiz/assessment_qti.xml"/><dependency identifierref="r_quiz_meta"/></resource>
+    <resource identifier="r_quiz_meta" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="r_quiz/assessment_meta.xml"><file href="r_quiz/assessment_meta.xml"/><file href="non_cc_assessments/r_quiz.xml.qti"/></resource>
+    <resource identifier="r_old_over" type="webcontent" href="wiki_content/old-over.html"><file href="wiki_content/old-over.html"/></resource>
+    <resource identifier="r_old_notes" type="webcontent" href="wiki_content/old-notes.html"><file href="wiki_content/old-notes.html"/></resource>
+    <resource identifier="r_old_disc" type="imsdt_xmlv1p1"><file href="r_old_disc.xml"/><dependency identifierref="r_old_disc_meta"/></resource>
+    <resource identifier="r_old_disc_meta" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="r_old_disc_meta.xml"><file href="r_old_disc_meta.xml"/></resource>
+  </resources>
+</manifest>`,
+  );
+  zip.file('course_settings/syllabus.html', '<html><body>old</body></html>');
+  zip.file('course_settings/course_settings.xml', `<?xml version="1.0"?><course ${ns}><title>Tpl</title></course>`);
+  zip.file('wiki_content/welcome.html', '<html><body>Welcome</body></html>');
+  zip.file('r_weblink.xml', '<webLink/>');
+  zip.file('r_quiz/assessment_qti.xml', '<questestinterop/>');
+  zip.file('r_quiz/assessment_meta.xml', `<quiz ${ns}/>`);
+  zip.file('non_cc_assessments/r_quiz.xml.qti', '<questestinterop/>');
+  zip.file('wiki_content/old-over.html', '<html><body>OLD OVERVIEW</body></html>');
+  zip.file('wiki_content/old-notes.html', '<html><body>OLD NOTES</body></html>');
+  zip.file('r_old_disc.xml', '<topic/>');
+  zip.file('r_old_disc_meta.xml', `<topicMeta ${ns}/>`);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+describe('assembleTemplateImscc — fidelity to a real Canvas-shaped template', () => {
+  const syllabus: Syllabus = {
+    courseTitle: 'T',
+    courseOverview: 'o',
+    chapters: [
+      { number: 1, title: 'Module 1: Cells', narrative: 'n', keyConcepts: ['c'], widgets: [], scienceAnnotations: [], spacingConnections: [] },
+    ],
+  };
+  const content: TemplateChapterContent = {
+    moduleOverviewHtml: '<p>NEW OVERVIEW</p>',
+    instructorNotes: [{ title: 'Pacing', htmlContent: '<p>NEW NOTES</p>' }],
+    discussion: { title: 'Q', promptHtml: '<p>NEW PROMPT</p>' },
+  };
+
+  async function run() {
+    const bytes = await buildCanvasShapedTemplate();
+    const template = await parseImsccTemplate({ file: bytes, name: 'real-shape' });
+    const chapters = [
+      { number: 1, title: 'Module 1: Cells', htmlContent: '', templateContent: content },
+    ] as GeneratedChapter[];
+    const out = await assembleTemplateImscc({ syllabus, chapters, template, templateBlob: bytes });
+    return JSZip.loadAsync(new Uint8Array(await out.arrayBuffer()));
+  }
+
+  it('passes verbatim modules through intact: URL, link settings, completion requirements, sequential flag', async () => {
+    const zip = await run();
+    const mm = await zip.file('course_settings/module_meta.xml')!.async('string');
+
+    // The external link keeps its URL (it was dropped before, so Canvas discarded the item).
+    expect(mm).toContain('<url>https://example.edu/help</url>');
+    expect(mm).toContain('{"selection_width":800}');
+    expect(mm).toContain('<new_tab>true</new_tab>');
+    expect(mm).toContain('<indent>1</indent>');
+    // Module-level settings that used to be hard-coded away.
+    expect(mm).toContain('<require_sequential_progress>true</require_sequential_progress>');
+    expect(mm).toContain('<completion_requirement>');
+    expect(mm).toContain('<type>must_view</type>');
+    // Renumbered to the front (was position 5).
+    const begin = mm.slice(mm.indexOf('identifier="mod_begin"'), mm.indexOf('</module>'));
+    expect(begin).toMatch(/<\/title>\s*<workflow_state>active<\/workflow_state>\s*<position>1<\/position>/);
+  });
+
+  it('keeps the original manifest linkage for verbatim items (no dangling references)', async () => {
+    const zip = await run();
+    const manifest = await zip.file('imsmanifest.xml')!.async('string');
+    const ids = new Set([...manifest.matchAll(/<resource identifier="([^"]+)"/g)].map((m) => m[1]));
+    // The external link's org item points at its web-link resource, not at the module_meta id.
+    expect(manifest).toMatch(/<item identifier="item_link" identifierref="r_weblink">/);
+    for (const m of manifest.matchAll(/<item identifier="[^"]+" identifierref="([^"]+)"/g)) {
+      expect(ids.has(m[1]), `dangling identifierref ${m[1]}`).toBe(true);
+    }
+  });
+
+  it('keeps resource dependencies and intendeduse, so verbatim quizzes keep their metadata', async () => {
+    const zip = await run();
+    const manifest = await zip.file('imsmanifest.xml')!.async('string');
+    expect(manifest).toMatch(/<resource identifier="r_quiz"[^>]*>[\s\S]*?<dependency identifierref="r_quiz_meta"\/>/);
+    expect(manifest).toMatch(/<resource identifier="r_syll"[^>]*intendeduse="syllabus"/);
+    expect(zip.file('non_cc_assessments/r_quiz.xml.qti')).toBeTruthy();
+  });
+
+  it("removes the replaced pattern module's files and metadata resources from the archive", async () => {
+    const zip = await run();
+    const manifest = await zip.file('imsmanifest.xml')!.async('string');
+
+    // Canvas's native importer scans wiki_content/ directly, so stale pages must be physically gone.
+    for (const gone of ['wiki_content/old-over.html', 'wiki_content/old-notes.html', 'r_old_disc.xml', 'r_old_disc_meta.xml']) {
+      expect(zip.file(gone), gone).toBeNull();
+    }
+    for (const id of ['r_old_over', 'r_old_notes', 'r_old_disc', 'r_old_disc_meta']) {
+      expect(manifest).not.toContain(`identifier="${id}"`);
+    }
+    // Verbatim content stays.
+    expect(zip.file('wiki_content/welcome.html')).toBeTruthy();
+    expect(zip.file('r_quiz/assessment_meta.xml')).toBeTruthy();
+    // And the generated replacement is present.
+    const pages = Object.keys(zip.files).filter((n) => n.startsWith('wiki_content/') && !n.endsWith('/'));
+    const bodies = await Promise.all(pages.map((n) => zip.file(n)!.async('string')));
+    expect(bodies.some((b) => b.includes('NEW OVERVIEW'))).toBe(true);
+    expect(bodies.some((b) => b.includes('OLD'))).toBe(false);
+  });
+});

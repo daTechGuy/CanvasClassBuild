@@ -28,7 +28,12 @@ function resolveProvider(options: StreamOptions): {
     return {
       provider,
       apiKey: options.ollamaApiKey || state.ollamaApiKey,
-      model: options.model || options.ollamaModel || state.ollamaModel,
+      // Call sites pass Anthropic model ids (MODELS.opus etc.); those mean
+      // nothing to Ollama, so only honour an explicit non-Claude override.
+      model:
+        (options.model && !options.model.startsWith('claude-') ? options.model : undefined) ||
+        options.ollamaModel ||
+        state.ollamaModel,
     };
   }
   return { provider, apiKey: options.apiKey, model: options.model };
@@ -55,6 +60,8 @@ export async function streamWithRetry(
     try {
       return await streamMessage(options, callbacks);
     } catch (err) {
+      // Never retry a user-initiated cancel.
+      if (options.signal?.aborted) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       const isRateLimit = msg.includes('429') || msg.toLowerCase().includes('rate');
       if (isRateLimit && attempt < maxRetries) {

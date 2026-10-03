@@ -4,6 +4,7 @@ import { idbStorage } from './idbStorage';
 import type {
   CourseSetup,
   Syllabus,
+  ChapterSyllabus,
   ResearchDossier,
   GeneratedChapter,
   StageId,
@@ -42,6 +43,10 @@ interface CourseState {
   completeStage: (stage: StageId) => void;
   updateSetup: (updates: Partial<CourseSetup>) => void;
   setSyllabus: (syllabus: Syllabus) => void;
+  /** Edit a single syllabus chapter in place (title, narrative, …) without
+   *  discarding the curriculum map — its syllabusHash staleness check handles
+   *  prompting for a regenerate. */
+  updateSyllabusChapter: (number: number, updates: Partial<ChapterSyllabus>) => void;
   setCurriculumMap: (map: CurriculumMap) => void;
   clearCurriculumMap: () => void;
   addSyllabusMessage: (role: 'user' | 'assistant', content: string) => void;
@@ -51,6 +56,19 @@ interface CourseState {
   updateChapter: (number: number, updates: Partial<GeneratedChapter>) => void;
   setOutlineFields: (fields: OutlineFields | null) => void;
   setOutlineRawText: (text: string | null) => void;
+  /**
+   * Atomically write a single slide's rendered image into a chapter's
+   * slidesJson. Used by the slide-render flow so concurrent gpt-image-2
+   * workers writing different slides don't clobber each other's progress.
+   */
+  setSlideImage: (chapterNum: number, slideIndex: number, dataUri: string) => void;
+  /** Refine one slide (image prompt and/or rendered image) without disturbing
+   *  the rest of the deck. Used by the per-slide "Regenerate image" flow. */
+  updateSlide: (
+    chapterNum: number,
+    slideIndex: number,
+    updates: Partial<import('../types/course').SlideData>,
+  ) => void;
   resetDownstream: () => void;
   reset: () => void;
 }
@@ -64,9 +82,11 @@ const defaultSetup: CourseSetup = {
   numChapters: 12,
   chapterLength: 'standard',
   widgetsPerChapter: 2,
-  themeId: 'midnight',
+  themeId: 'press',
   voiceId: 'Kore',
 };
+
+const LEGACY_THEME_IDS = new Set(['midnight', 'classic', 'ocean', 'warm']);
 
 export const useCourseStore = create<CourseState>()(
   persist(
@@ -95,6 +115,18 @@ export const useCourseStore = create<CourseState>()(
         set((state) => ({ setup: { ...state.setup, ...updates } })),
 
       setSyllabus: (syllabus) => set({ syllabus, curriculumMap: null }),
+
+      updateSyllabusChapter: (number, updates) =>
+        set((state) => ({
+          syllabus: state.syllabus
+            ? {
+                ...state.syllabus,
+                chapters: state.syllabus.chapters.map((c) =>
+                  c.number === number ? { ...c, ...updates } : c
+                ),
+              }
+            : state.syllabus,
+        })),
 
       setCurriculumMap: (map) => set({ curriculumMap: map }),
 
@@ -126,6 +158,33 @@ export const useCourseStore = create<CourseState>()(
 
       setOutlineFields: (fields) => set({ outlineFields: fields }),
       setOutlineRawText: (text) => set({ outlineRawText: text }),
+      setSlideImage: (chapterNum, slideIndex, dataUri) =>
+        set((state) => ({
+          chapters: state.chapters.map((c) => {
+            if (c.number !== chapterNum) return c;
+            const slides = c.slidesJson ?? [];
+            return {
+              ...c,
+              slidesJson: slides.map((s, i) =>
+                i === slideIndex ? { ...s, imageDataUri: dataUri } : s,
+              ),
+            };
+          }),
+        })),
+
+      updateSlide: (chapterNum, slideIndex, updates) =>
+        set((state) => ({
+          chapters: state.chapters.map((c) => {
+            if (c.number !== chapterNum) return c;
+            const slides = c.slidesJson ?? [];
+            return {
+              ...c,
+              slidesJson: slides.map((s, i) =>
+                i === slideIndex ? { ...s, ...updates } : s,
+              ),
+            };
+          }),
+        })),
 
       resetDownstream: () =>
         set({
@@ -154,7 +213,7 @@ export const useCourseStore = create<CourseState>()(
     {
       name: 'classbuild-course',
       storage: idbStorage,
-      version: 3,
+      version: 4,
       migrate(persisted, version) {
         const state = persisted as Record<string, unknown>;
         // v0→v1: migrate old preview/generate stages to build
@@ -176,6 +235,20 @@ export const useCourseStore = create<CourseState>()(
           if (!('curriculumMap' in state)) state.curriculumMap = null;
         }
         // v2→v3: move to IndexedDB (no schema changes)
+        // v3→v4: replace retired chapter themes (midnight / classic / ocean /
+        // warm) with the new default 'press' — those CSS files no longer ship
+        // and getTheme() falls back to 'press' anyway, but normalize so the
+        // ExportPage picker shows the right selection on first render.
+        if (version === undefined || version < 4) {
+          const setupRecord = state.setup as Record<string, unknown> | undefined;
+          if (setupRecord) {
+            const stale = setupRecord.themeId;
+            if (typeof stale === 'string' && LEGACY_THEME_IDS.has(stale)) {
+              setupRecord.themeId = 'press';
+            }
+            if (!setupRecord.themeId) setupRecord.themeId = 'press';
+          }
+        }
         return state;
       },
       partialize: (state) => ({
@@ -188,12 +261,23 @@ export const useCourseStore = create<CourseState>()(
         curriculumMap: state.curriculumMap,
         outlineFields: state.outlineFields,
         outlineRawText: state.outlineRawText,
-        // Persist chapters but strip blob URLs and large data URIs
+        // Persist chapters but strip the heaviest binaries so the IndexedDB
+        // snapshot stays small and writes don't stall (which silently lost
+        // later-generated content). The big offender is the rendered 4K slide
+        // images (~13/chapter, written one-at-a-time so they also triggered a
+        // write storm); strip their data URIs but KEEP imagePrompt/title so the
+        // deck re-renders next session. Chapter reading figures stay inlined —
+        // they're smaller, written once, and not cleanly re-renderable, so the
+        // reading survives a reload intact. Everything else here is small JSON
+        // (syllabus, quiz + challenge data, transcripts, capped audioDataUri)
+        // and now saves reliably. The idbStorage write timeout surfaces any
+        // residual oversize as a visible error rather than a silent hang.
         chapters: state.chapters.map((c) => ({
           ...c,
           audioUrl: undefined,
           pptxUrl: undefined,
           infographicDataUri: undefined,
+          slidesJson: c.slidesJson?.map((s) => ({ ...s, imageDataUri: undefined })),
         })),
       }),
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import JSZip from 'jszip';
 import { assembleImscc } from '../src/services/export/imsccExporter';
 import type {
@@ -136,90 +136,386 @@ async function readText(zip: JSZip, path: string): Promise<string> {
   return f.async('string');
 }
 
-describe('assembleImscc', () => {
-  it('produces a parseable ZIP with a CC 1.1 manifest and Canvas course_settings', async () => {
+function parseXml(xml: string): Document {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length > 0) {
+    throw new Error(`Not well-formed XML: ${xml.slice(0, 120)}`);
+  }
+  return doc;
+}
+
+/** All elements by local name (namespace-agnostic). */
+function all(doc: Document | Element, name: string): Element[] {
+  return Array.from(doc.getElementsByTagName('*')).filter((e) => e.localName === name);
+}
+
+function text(el: Element | undefined | null, name: string): string {
+  return (el ? all(el, name)[0]?.textContent : '') ?? '';
+}
+
+async function buildFull() {
+  const chapter = makeChapter({
+    practiceQuizData: practiceQuizMd,
+    inClassQuizData: inClassQuiz,
+    weeklyChallengeData: weeklyChallenge,
+    discussionData: [
+      { hook: 'Hot take', prompt: 'Are viruses alive?' },
+      { hook: 'Big picture', prompt: 'What is life?' },
+    ],
+  });
+  const blob = await assembleImscc(makeSyllabus(), [chapter]);
+  const zip = await unzipBlob(blob);
+  const manifest = parseXml(await readText(zip, 'imsmanifest.xml'));
+  const resources = new Map(all(manifest, 'resource').map((r) => [r.getAttribute('identifier')!, r]));
+  const modules = parseXml(await readText(zip, 'course_settings/module_meta.xml'));
+  return { zip, manifest, resources, modules };
+}
+
+describe('assembleImscc (native Canvas export)', () => {
+  it('writes a CC 1.1 manifest plus the native course_settings files', async () => {
     const blob = await assembleImscc(makeSyllabus(), [makeChapter()]);
     const zip = await unzipBlob(blob);
 
     const manifest = await readText(zip, 'imsmanifest.xml');
     expect(manifest).toContain('imsccv1p1');
     expect(manifest).toContain('<schemaversion>1.1.0</schemaversion>');
-    expect(manifest).toContain('Test Course');
 
-    // Canvas-specific course_settings extension
-    expect(zip.file('course_settings/course_settings.xml')).toBeTruthy();
-    expect(zip.file('course_settings/syllabus.html')).toBeTruthy();
-    expect(zip.file('course_settings/canvas_export.txt')).toBeTruthy();
+    for (const f of [
+      'course_settings/course_settings.xml',
+      'course_settings/module_meta.xml',
+      'course_settings/assignment_groups.xml',
+      'course_settings/files_meta.xml',
+      'course_settings/syllabus.html',
+      'course_settings/canvas_export.txt',
+    ]) {
+      expect(zip.file(f), f).toBeTruthy();
+    }
 
-    const courseSettings = await readText(zip, 'course_settings/course_settings.xml');
-    expect(courseSettings).toMatch(/<title>Test Course<\/title>/);
+    const settings = parseXml(await readText(zip, 'course_settings/course_settings.xml'));
+    expect(text(settings.documentElement, 'title')).toBe('Test Course');
+    expect(text(settings.documentElement, 'default_view')).toBe('modules');
   });
 
-  it('emits the reading HTML as a webcontent resource', async () => {
-    const blob = await assembleImscc(makeSyllabus(), [makeChapter()]);
-    const zip = await unzipBlob(blob);
+  it('puts the overview and a chapter outline in the syllabus, tagged intendeduse=syllabus', async () => {
+    const { zip, resources } = await buildFull();
 
-    const readingPath = 'chapter-1-chapter-one/reading.html';
-    expect(zip.file(readingPath)).toBeTruthy();
-    const reading = await readText(zip, readingPath);
-    expect(reading).toContain('Reading body');
+    const syllabus = await readText(zip, 'course_settings/syllabus.html');
+    expect(syllabus).toContain('A test course for the exporter unit tests.');
+    expect(syllabus).toContain('Chapter One');
+    const tagged = [...resources.values()].find((r) => r.getAttribute('intendeduse') === 'syllabus');
+    expect(tagged?.getAttribute('href')).toBe('course_settings/syllabus.html');
   });
 
-  it('emits QTI 1.2 assessments for practice + in-class + weekly challenge with auto-publish sidecars', async () => {
+  it('emits the reading as a native Canvas Page (no scripts/styles) plus the interactive original as a file', async () => {
     const chapter = makeChapter({
-      practiceQuizData: practiceQuizMd,
-      inClassQuizData: inClassQuiz,
-      weeklyChallengeData: weeklyChallenge,
+      htmlContent:
+        '<html><head><style>body{color:red}</style><script>alert(1)</script></head><body><h1>Reading body</h1><script>x()</script></body></html>',
     });
-    const blob = await assembleImscc(makeSyllabus(), [chapter]);
-    const zip = await unzipBlob(blob);
+    const zip = await unzipBlob(await assembleImscc(makeSyllabus(), [chapter]));
 
-    // Practice quiz: two MCQs from the markdown
-    const practiceQti = await readText(zip, 'chapter-1-chapter-one/practice-quiz.xml');
-    expect(practiceQti).toContain('questestinterop');
-    expect(practiceQti.match(/<item /g)?.length).toBe(2);
-    expect(practiceQti).toContain('Which mammal lays eggs?');
+    const page = await readText(zip, 'wiki_content/chapter-1-chapter-one-reading.html');
+    expect(page).toContain('Reading body');
+    expect(page).not.toMatch(/<script|<style/i);
+    expect(page).toContain('<meta name="workflow_state" content="active"/>');
+    expect(page).toMatch(/<meta name="identifier" content="g[0-9a-f]{32}"\/>/);
 
-    // Practice quiz auto-publish sidecar
-    const practiceMeta = await readText(zip, 'chapter-1-chapter-one/practice-quiz-meta.xml');
-    expect(practiceMeta).toContain('canvas.instructure.com');
-    expect(practiceMeta).toContain('<published>true</published>');
-    expect(practiceMeta).toContain('<workflow_state>published</workflow_state>');
-
-    // In-class: one MCQ
-    const inClassQti = await readText(zip, 'chapter-1-chapter-one/in-class-quiz.xml');
-    expect(inClassQti.match(/<item /g)?.length).toBe(1);
-    expect(inClassQti).toContain('What is 2+2?');
-    expect(zip.file('chapter-1-chapter-one/in-class-quiz-meta.xml')).toBeTruthy();
-
-    // Weekly challenge: 5 source questions but only 2 (mcq + two-stage)
-    // convert to QTI. Lossy types (assertion-reason, agreement-matrix,
-    // slider-estimation) are dropped.
-    const challengeQti = await readText(zip, 'chapter-1-chapter-one/weekly-challenge.xml');
-    expect(challengeQti.match(/<item /g)?.length).toBe(2);
-    expect(zip.file('chapter-1-chapter-one/weekly-challenge-meta.xml')).toBeTruthy();
+    // Full-fidelity original is kept for download.
+    const original = await readText(zip, 'web_resources/chapter-1-chapter-one/reading-interactive.html');
+    expect(original).toContain('alert(1)');
   });
 
-  it('emits native discussion topics with auto-publish sidecars', async () => {
+  it('builds one quiz per source with both QTI flavours and the right graded/practice type', async () => {
+    const { zip, resources, modules } = await buildFull();
+
+    const quizItems = all(modules, 'item').filter((i) => text(i, 'content_type') === 'Quizzes::Quiz');
+    expect(quizItems.map((i) => text(i, 'title'))).toEqual([
+      'Chapter One — Practice Quiz',
+      'Chapter One — In-Class Quiz',
+      'Week 1 Challenge — Chapter One',
+    ]);
+
+    const kinds: string[] = [];
+    for (const item of quizItems) {
+      const quizId = text(item, 'identifierref');
+      const res = resources.get(quizId)!;
+      expect(res.getAttribute('type')).toBe('imsqti_xmlv1p2/imscc_xmlv1p1/assessment');
+      const metaResId = all(res, 'dependency')[0].getAttribute('identifierref')!;
+      const metaRes = resources.get(metaResId)!;
+      const metaHref = metaRes.getAttribute('href')!;
+      expect(metaHref).toBe(`${quizId}/assessment_meta.xml`);
+      // The meta resource carries Canvas's native QTI too.
+      expect(all(metaRes, 'file').map((f) => f.getAttribute('href'))).toContain(
+        `non_cc_assessments/${quizId}.xml.qti`,
+      );
+      expect(zip.file(`${quizId}/assessment_qti.xml`)).toBeTruthy();
+      expect(zip.file(`non_cc_assessments/${quizId}.xml.qti`)).toBeTruthy();
+
+      const meta = parseXml(await readText(zip, metaHref));
+      kinds.push(text(meta.documentElement, 'quiz_type'));
+      expect(text(meta.documentElement, 'available')).toBe('true');
+    }
+    expect(kinds).toEqual(['practice_quiz', 'assignment', 'assignment']);
+  });
+
+  it('graded quizzes carry an assignment in the Assignments group; the practice quiz does not', async () => {
+    const { zip, resources, modules } = await buildFull();
+    const groups = parseXml(await readText(zip, 'course_settings/assignment_groups.xml'));
+    const groupId = all(groups, 'assignmentGroup')[0].getAttribute('identifier');
+    expect(text(all(groups, 'assignmentGroup')[0], 'title')).toBe('Assignments');
+
+    const metas: Document[] = [];
+    for (const item of all(modules, 'item').filter((i) => text(i, 'content_type') === 'Quizzes::Quiz')) {
+      const quizId = text(item, 'identifierref');
+      metas.push(parseXml(await readText(zip, `${quizId}/assessment_meta.xml`)));
+      void resources;
+    }
+    const [practice, inClass, challenge] = metas;
+    expect(all(practice, 'assignment')).toHaveLength(0);
+    for (const m of [inClass, challenge]) {
+      const a = all(m, 'assignment')[0];
+      expect(a).toBeTruthy();
+      expect(text(a, 'workflow_state')).toBe('published');
+      expect(text(a, 'submission_types')).toBe('online_quiz');
+      expect(text(a, 'assignment_group_identifierref')).toBe(groupId);
+    }
+  });
+
+  it('wires correct answers, Canvas question metadata, and drops non-MCQ challenge types', async () => {
+    const { zip, modules } = await buildFull();
+    const ids = all(modules, 'item')
+      .filter((i) => text(i, 'content_type') === 'Quizzes::Quiz')
+      .map((i) => text(i, 'identifierref'));
+    const [practiceId, inClassId, challengeId] = ids;
+
+    // Practice quiz: two MCQs parsed from markdown; first answer is correct.
+    const nativePractice = parseXml(await readText(zip, `non_cc_assessments/${practiceId}.xml.qti`));
+    const items = all(nativePractice, 'item');
+    expect(items).toHaveLength(2);
+    const labels = (el: Element) =>
+      all(el, 'qtimetadatafield').map((f) => [text(f, 'fieldlabel'), text(f, 'fieldentry')]);
+    const meta0 = Object.fromEntries(labels(items[0]));
+    expect(meta0.question_type).toBe('multiple_choice_question');
+    expect(meta0.points_possible).toBe('1.0');
+    expect(meta0.original_answer_ids).toBe('1,2,3,4');
+    expect(meta0.assessment_question_identifierref).toMatch(/^g[0-9a-f]{32}$/);
+    // Correct answer ("The platypus") is label 1.
+    expect(all(items[0], 'varequal')[0].textContent).toBe('1');
+    expect(items[0].textContent).toContain('Which mammal lays eggs?');
+
+    // The CC-profile twin points at the same questions the native file references.
+    const cc = parseXml(await readText(zip, `${practiceId}/assessment_qti.xml`));
+    expect(all(cc, 'item').map((i) => i.getAttribute('ident'))).toContain(
+      meta0.assessment_question_identifierref,
+    );
+
+    // In-class: one question.
+    expect(all(parseXml(await readText(zip, `non_cc_assessments/${inClassId}.xml.qti`)), 'item')).toHaveLength(1);
+    // Challenge: 5 source questions, only mcq + two-stage convert.
+    expect(all(parseXml(await readText(zip, `non_cc_assessments/${challengeId}.xml.qti`)), 'item')).toHaveLength(2);
+  });
+
+  it('emits published native discussions linked through a topic-meta resource', async () => {
+    const { zip, resources, modules } = await buildFull();
+    const topics = all(modules, 'item').filter((i) => text(i, 'content_type') === 'DiscussionTopic');
+    expect(topics).toHaveLength(2);
+
+    const topicId = text(topics[0], 'identifierref');
+    const res = resources.get(topicId)!;
+    expect(res.getAttribute('type')).toBe('imsdt_xmlv1p1');
+    const topicXml = await readText(zip, `${topicId}.xml`);
+    expect(topicXml).toContain('imsdt_v1p1');
+    expect(topicXml).toContain('Hot take');
+    expect(topicXml).toContain('Are viruses alive?');
+
+    const metaId = all(res, 'dependency')[0].getAttribute('identifierref')!;
+    const meta = parseXml(await readText(zip, `${metaId}.xml`));
+    expect(text(meta.documentElement, 'topic_id')).toBe(topicId);
+    expect(text(meta.documentElement, 'workflow_state')).toBe('active');
+    expect(text(meta.documentElement, 'discussion_type')).toBe('threaded');
+  });
+
+  it('module_meta items mirror the manifest organization, in order, and resolve to resources', async () => {
+    const { manifest, resources, modules } = await buildFull();
+
+    const mods = all(modules, 'module');
+    expect(mods).toHaveLength(1);
+    expect(text(mods[0], 'title')).toBe('Chapter 1: Chapter One');
+    expect(text(mods[0], 'workflow_state')).toBe('active');
+
+    const metaItems = all(mods[0], 'item');
+    expect(metaItems.map((i) => text(i, 'content_type'))).toEqual([
+      'WikiPage',
+      'Quizzes::Quiz',
+      'Quizzes::Quiz',
+      'Quizzes::Quiz',
+      'DiscussionTopic',
+      'DiscussionTopic',
+      'Attachment', // teaching-resources.docx
+      'Attachment', // interactive reading, download
+    ]);
+    expect(metaItems.map((i) => text(i, 'position'))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+
+    // Every module item resolves to a manifest resource…
+    for (const i of metaItems) expect(resources.has(text(i, 'identifierref'))).toBe(true);
+
+    // …and the manifest organization lists the same item identifiers.
+    const org = all(manifest, 'organization')[0];
+    const orgItemIds = all(org, 'item')
+      .map((i) => i.getAttribute('identifier'))
+      .filter((id): id is string => !!id && id !== 'LearningModules');
+    for (const i of metaItems) expect(orgItemIds).toContain(i.getAttribute('identifier'));
+  });
+
+  it('is internally consistent: unique ids, every referenced file exists, deps resolve', async () => {
+    const { zip, manifest, resources } = await buildFull();
+
+    const allIds = [...all(manifest, 'resource'), ...all(manifest, 'item')]
+      .map((e) => e.getAttribute('identifier'))
+      .filter(Boolean);
+    expect(new Set(allIds).size).toBe(allIds.length);
+
+    for (const res of resources.values()) {
+      for (const f of all(res, 'file')) expect(zip.file(f.getAttribute('href')!), f.getAttribute('href')!).toBeTruthy();
+      const href = res.getAttribute('href');
+      if (href) expect(zip.file(href), href).toBeTruthy();
+      for (const d of all(res, 'dependency')) expect(resources.has(d.getAttribute('identifierref')!)).toBe(true);
+    }
+    // Every XML part is well-formed.
+    for (const name of Object.keys(zip.files)) {
+      if (/\.(xml|qti)$/.test(name)) parseXml(await readText(zip, name));
+    }
+  });
+
+  it('is deterministic: exporting the same course twice yields identical identifiers', async () => {
+    const chapter = makeChapter({ practiceQuizData: practiceQuizMd });
+    const a = await readText(await unzipBlob(await assembleImscc(makeSyllabus(), [chapter])), 'imsmanifest.xml');
+    const b = await readText(await unzipBlob(await assembleImscc(makeSyllabus(), [chapter])), 'imsmanifest.xml');
+    expect(a).toBe(b);
+  });
+
+  it('escapes HTML in prompts and discussion text instead of injecting markup', async () => {
     const chapter = makeChapter({
-      discussionData: [
-        { hook: 'Hot take', prompt: 'Are viruses alive?' },
-        { hook: 'Big picture', prompt: 'What is life?' },
+      inClassQuizData: [
+        {
+          question: 'Is <b>bold</b> & "quoted" safe?',
+          correctAnswer: 'Yes <i>indeed</i>',
+          correctFeedback: 'Because <script>x</script>',
+          distractors: [{ text: 'No', feedback: 'n' }],
+        },
       ],
+      discussionData: [{ hook: 'A&B', prompt: 'Use <em>care</em>' }],
     });
-    const blob = await assembleImscc(makeSyllabus(), [chapter]);
-    const zip = await unzipBlob(blob);
+    const zip = await unzipBlob(await assembleImscc(makeSyllabus(), [chapter]));
+    const quizPath = Object.keys(zip.files).find((n) => n.endsWith('.xml.qti'))!;
+    const qti = parseXml(await readText(zip, quizPath));
+    // The prompt is stored as escaped HTML text — decoded once by the XML parser.
+    const prompt = all(qti, 'mattext')[0].textContent!;
+    expect(prompt).toContain('&lt;b&gt;bold&lt;/b&gt;');
+    expect(prompt).not.toContain('<b>');
 
-    const disc1 = await readText(zip, 'chapter-1-chapter-one/discussions/disc-1.xml');
-    expect(disc1).toContain('imsdt_v1p1');
-    expect(disc1).toContain('Hot take');
-    expect(disc1).toContain('Are viruses alive?');
+    const topicNames = Object.keys(zip.files).filter((n) => /^g[0-9a-f]{32}\.xml$/.test(n));
+    const topicXml = (await Promise.all(topicNames.map((n) => readText(zip, n)))).find((x) => x.includes('<topic '))!;
+    expect(topicXml).toContain('&amp;lt;em&amp;gt;care');
+  });
 
-    const meta1 = await readText(zip, 'chapter-1-chapter-one/discussions/disc-1-meta.xml');
-    expect(meta1).toContain('canvas.instructure.com');
-    expect(meta1).toContain('<published>true</published>');
+  it('adds a Course resources module for the curriculum matrix', async () => {
+    const zip = await unzipBlob(
+      await assembleImscc(makeSyllabus(), [makeChapter()], { curriculumCsv: 'a,b\n1,2\n' }),
+    );
+    expect(await readText(zip, 'web_resources/course/curriculum-alignment-matrix.csv')).toContain('a,b');
+    const modules = parseXml(await readText(zip, 'course_settings/module_meta.xml'));
+    expect(all(modules, 'module').map((m) => text(m, 'title'))).toEqual([
+      'Chapter 1: Chapter One',
+      'Course resources',
+    ]);
+    const files = await readText(zip, 'course_settings/files_meta.xml');
+    expect(files).toContain('curriculum-alignment-matrix.csv');
+  });
+});
 
-    expect(zip.file('chapter-1-chapter-one/discussions/disc-2.xml')).toBeTruthy();
-    expect(zip.file('chapter-1-chapter-one/discussions/disc-2-meta.xml')).toBeTruthy();
+describe('assembleImscc — slide decks', () => {
+  afterEach(() => {
+    vi.doUnmock('../src/services/export/pptxExporter');
+    vi.resetModules();
+  });
+
+  const slides = [
+    { title: 'A', speakerNotes: '', bullets: [], imagePrompt: 'prompt a' },
+    { title: 'B', speakerNotes: '', bullets: [], imagePrompt: 'prompt b' },
+  ];
+
+  async function loadWithFakePptx() {
+    const generatePptx = vi.fn(
+      async (
+        sl: unknown[],
+        _c: string,
+        _t: string,
+        _theme: string | undefined,
+        _key: string,
+        opts: { onSlideRendered?: (i: number, uri: string) => void; onProgress?: (c: number, t: number, p: string) => void },
+      ) => {
+        // Pretend two images were rendered.
+        sl.forEach((_, i) => opts.onSlideRendered?.(i, `data:image/png;base64,${i}`));
+        opts.onProgress?.(sl.length, sl.length, 'packing');
+        return { blob: new Blob(['PPTX']), renderedImages: {} };
+      },
+    );
+    vi.doMock('../src/services/export/pptxExporter', () => ({ generatePptx }));
+    const mod = await import('../src/services/export/imsccExporter');
+    return { assembleImscc: mod.assembleImscc, generatePptx };
+  }
+
+  async function files(blob: Blob) {
+    return Object.keys((await JSZip.loadAsync(await blob.arrayBuffer())).files);
+  }
+
+  it('omits slides.pptx and never calls the image API when slides are unrendered and no opt-in', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      openaiApiKey: 'sk-test',
+    });
+
+    expect(generatePptx).not.toHaveBeenCalled();
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(false);
+  });
+
+  it('bundles the deck from cached images without re-rendering', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const rendered = slides.map((sl) => ({ ...sl, imageDataUri: 'data:image/png;base64,x' }));
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: rendered })], {
+      openaiApiKey: 'sk-test',
+    });
+
+    expect(generatePptx).toHaveBeenCalledTimes(1);
+    const opts = generatePptx.mock.calls[0][5] as { preRendered: Record<number, string> };
+    expect(Object.keys(opts.preRendered)).toEqual(['0', '1']);
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(true);
+  });
+
+  it('renders and bundles missing decks only when renderMissingSlides is set, reporting progress', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    const onSlideRendered = vi.fn();
+    const onSlideProgress = vi.fn();
+    const blob = await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      openaiApiKey: 'sk-test',
+      renderMissingSlides: true,
+      onSlideRendered,
+      onSlideProgress,
+    });
+
+    expect(generatePptx).toHaveBeenCalledTimes(1);
+    expect(onSlideRendered).toHaveBeenCalledWith(1, 0, 'data:image/png;base64,0');
+    expect(onSlideRendered).toHaveBeenCalledWith(1, 1, 'data:image/png;base64,1');
+    expect(onSlideProgress).toHaveBeenCalledWith(1, 2, 2, 'packing');
+    expect((await files(blob)).some((f) => f.endsWith('slides.pptx'))).toBe(true);
+  });
+
+  it('never renders without an OpenAI key, even when asked to', async () => {
+    const { assembleImscc, generatePptx } = await loadWithFakePptx();
+    await assembleImscc(makeSyllabus(), [makeChapter({ slidesJson: slides })], {
+      renderMissingSlides: true,
+    });
+
+    expect(generatePptx).not.toHaveBeenCalled();
   });
 });

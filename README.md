@@ -50,7 +50,8 @@ Open [localhost:5173](http://localhost:5173).
 | Anthropic Claude | LLM provider = Anthropic, **OR** research backend = Claude web search | Course-content generation; Claude's built-in web search for the Research stage |
 | Ollama Cloud | LLM provider = Ollama Cloud | Course-content generation. Free tier doesn't include cloud models — see ollama.com/settings/keys |
 | Tavily | Research backend = Tavily | Web search for the Research stage. Free tier covers ~1,000 searches/month |
-| Google Gemini | Advanced mode + you want infographics or audiobook narration | TTS + image generation (optional) |
+| OpenAI | Advanced mode + you want slide images / chapter figures | Image generation (gpt-image-2, optional) |
+| ElevenLabs | Advanced mode + you want audiobook narration | Text-to-speech (optional) |
 
 The Wikipedia research backend needs no key.
 
@@ -71,7 +72,7 @@ The upstream ClassBuild also produces:
 - Gamified practice quiz with confidence calibration
 - In-class quiz (5 shuffled versions + answer keys)
 - PowerPoint slides with speaker notes
-- AI-narrated audiobook (Gemini TTS)
+- AI-narrated audiobook (ElevenLabs)
 - AI-generated infographic (Gemini)
 - Weekly mastery challenge with 6 question types and SCORM 2004 wrapper
 - Discussion starters and classroom activities
@@ -96,9 +97,15 @@ across the instrumented modules (parser, exporters, research backends,
 services, setup components). Pages — `BuildPage`, `SyllabusPage`,
 `ExportPage`, `ResearchPage` — are not yet instrumented for unit tests.
 
+### The no-template Canvas export
+
+Without an uploaded template, "Export for Canvas (.imscc)" writes a **native Canvas course export** — the same file layout Canvas's own exporter produces (`module_meta.xml`, `wiki_content/` pages, `non_cc_assessments/` quizzes, `assessment_meta.xml`, `assignment_groups.xml`, syllabus). This matters: a package carrying Canvas's `course_settings/canvas_export.txt` marker is read by Canvas's *native* importer, which silently ignores plain Common Cartridge manifest content, so a "generic" cartridge with that marker imports with no modules, pages or quizzes.
+
+Check any cartridge offline with `python tools/validate-imscc.py file.imscc` (it flags exactly that class of problem). To test imports end to end you need a Canvas with Instructure's QTIMigrationTool installed, otherwise quizzes are skipped silently.
+
 Current coverage:
 - `tests/template-parser.test.ts` — module classification (verbatim / pattern / example-pattern), prefix detection (`Module N:`, `MN Instructor Notes:`, fully-locked `Module N Overview`), `(Example to Edit)` placeholder marker, `**EDIT**` markers, example-pattern content extraction.
-- `tests/imscc-exporter.test.ts` — manifest shape, course_settings extension files, reading webcontent, QTI 1.2 quiz emission (practice + in-class + weekly challenge), Canvas auto-publish sidecars, native discussion topics.
+- `tests/imscc-exporter.test.ts` — the native-Canvas cartridge (the no-template export): module_meta/manifest consistency, reading as a Canvas Page, both QTI flavours per quiz with correct answers, graded vs practice quizzes + assignment group, published discussions, syllabus, deterministic ids, HTML escaping, slide-deck rendering rules.
 - `tests/template-imscc-exporter.test.ts` — round-trip: build template fixture → emit IMSCC → re-parse → verify verbatim modules preserved, pattern modules replaced, `web_resources/` + `lti_resource_links/` pass through. Outline-field overrides on title / syllabus body / manifest LOM.
 - `tests/parse-outline-docx.test.ts` — outline-DOCX field extraction with the LLM mocked: clean JSON, code-fenced JSON, partial / empty / malformed responses, char-cap on long input, provider override forwarding.
 - `tests/generate-template-chapter.test.ts` — Canvas Module generation with the LLM mocked: parse success / failure / missing-required-field, few-shot exemplar embedding, no-example case, Ollama provider plumbing, Anthropic Sonnet default.
@@ -107,7 +114,6 @@ Current coverage:
 - `tests/components/TemplateTitleEditor.test.tsx` — locked-prefix display, save reassembles `Module N: <suffix>` with prefix intact, blanking the suffix preserves just the prefix, off-pattern titles get a synthesized prefix, Reset rolls drafts back.
 - `tests/research-wikipedia.test.ts` — Wikipedia backend with LLM + `fetch` both mocked: query gen → per-query API call → synthesis call ordering, URL builder + dedup, `<span class="searchmatch">` snippet stripping, per-query failure doesn't abort batch, progress phase transitions, fallback query when query-gen returns nothing parseable.
 - `tests/research-tavily.test.ts` — Tavily backend with LLM + `fetch` both mocked: missing-key throw, POST body shape (`max_results`, `search_depth`, `include_answer`) + bearer auth, cross-query dedup by URL, content snippets feed into synthesis prompt, hits without a URL are dropped, per-query failure doesn't abort batch, progress phase order, `published_date` preserved as `pageAge`.
-- `tests/components/ApiKeyPanel.test.tsx` — provider toggle (Claude/Ollama) writes to apiStore, research backend toggle (Claude / Tavily / Wikipedia), hint text changes per selection, Ollama model input visibility gated on `provider==='ollama' && key.trim() !== ''`, model edits write through, auto-validate on mount POSTs to the right endpoints with bearer auth (Ollama → `/api/ollama-proxy`, Tavily → `api.tavily.com/search`, Gemini → `googleapis.com/.../models?key=…`), non-2xx sets `keyValid=false`, no re-validation when already validated or key is blank.
 - `tests/research-anthropic.test.ts` — Anthropic research backend with `streamWithRetry` mocked: streamWithRetry called with the Claude key + `web_search_20250305` tool + forced `provider:'anthropic'`, progress phases emitted in `thinking → searching → compiling` order, queries appended via `appendQueries`, streamed text appended via `appendSynthesisText`, dedup by URL across batches, `setLatestSource` is the last fresh hit, valid JSON parses into a dossier, malformed text falls back to a dossier built from collected web results.
 
 ## Deploying to production
@@ -203,7 +209,7 @@ src/
 
 ## Built with
 
-React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Sonnet 4.6 / Opus 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · Gemini
+React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · OpenAI gpt-image-2 · ElevenLabs
 
 ## Contributing
 

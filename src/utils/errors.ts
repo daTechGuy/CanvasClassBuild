@@ -1,5 +1,5 @@
 /**
- * Convert an error from Claude, Gemini, ElevenLabs, or a raw fetch into a
+ * Convert an error from Claude, OpenAI, ElevenLabs, or a raw fetch into a
  * short, user-facing sentence. Used by the UI so tab-error banners and
  * toasts don't leak internal API noise like "HTTP 429: {"error":..."}.
  *
@@ -54,8 +54,8 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
     return 'CanvasClassBuild was updated while this tab was open. Refresh the page (Cmd/Ctrl+Shift+R) and retry.';
   }
 
-  // Network
-  if (/failed to fetch|network|econnreset|timeout|timed out|econnref/i.test(message)) {
+  // Network — includes the Anthropic SDK's APIConnectionError ("Connection error.")
+  if (/failed to fetch|network|connection error|econnreset|timeout|timed out|econnref/i.test(message)) {
     return 'Network error. Check your connection and retry.';
   }
 
@@ -69,6 +69,20 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
   }
 
   return fallback;
+}
+
+/**
+ * True when an error is the result of a user-initiated cancel (AbortController
+ * fired). Call sites treat these as a silent no-op — never an error banner.
+ * Covers DOM AbortError, the Anthropic SDK's APIUserAbortError, and the
+ * generic "Request was aborted." message shape.
+ */
+export function isAbortError(err: unknown): boolean {
+  if (err == null) return false;
+  const name = (err as { name?: string }).name;
+  if (name === 'AbortError' || name === 'APIUserAbortError') return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\baborted\b/i.test(message);
 }
 
 function getStatus(err: unknown): number | undefined {

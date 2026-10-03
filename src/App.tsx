@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
 import { AppShell } from './components/layout/AppShell';
 import { LandingPage } from './pages/LandingPage';
 import { SetupPage } from './pages/SetupPage';
@@ -20,29 +21,61 @@ function App() {
 
   if (!hydrated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg-primary">
-        <div className="flex items-center gap-3 text-text-muted text-sm">
-          <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-          Loading course data...
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--cb-ground-page)',
+          fontFamily: 'var(--font-cb-serif)',
+        }}
+      >
+        <div
+          className="cb-italic"
+          style={{
+            fontSize: 15,
+            color: 'var(--cb-text-muted)',
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 10,
+          }}
+        >
+          <span
+            className="cb-sc cb-mono"
+            style={{
+              fontSize: 12,
+              letterSpacing: '0.14em',
+              color: 'var(--cb-accent-emphasis)',
+            }}
+          >
+            cb · loading
+          </span>
+          <span>fetching local course data…</span>
         </div>
       </div>
     );
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/setup" element={<SetupPage />} />
-          <Route path="/syllabus" element={<SyllabusPage />} />
-          <Route path="/research" element={<ResearchPage />} />
-          <Route path="/build" element={<BuildPage />} />
-          <Route path="/export" element={<ExportPage />} />
-          <Route path="/templates" element={<TemplatePreviewPage />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    // reducedMotion="user" disables framer-motion transforms for users with
+    // the OS "reduce motion" preference; the CSS side is handled by the
+    // prefers-reduced-motion block in index.css.
+    <MotionConfig reducedMotion="user">
+      <BrowserRouter>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/setup" element={<SetupPage />} />
+            <Route path="/syllabus" element={<SyllabusPage />} />
+            <Route path="/research" element={<ResearchPage />} />
+            <Route path="/build" element={<BuildPage />} />
+            <Route path="/export" element={<ExportPage />} />
+            <Route path="/templates" element={<TemplatePreviewPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </MotionConfig>
   );
 }
 

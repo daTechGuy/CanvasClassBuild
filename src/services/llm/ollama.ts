@@ -60,7 +60,7 @@ export async function streamMessageOllama(
   options: StreamOptions,
   callbacks: StreamCallbacks,
 ): Promise<string> {
-  const { apiKey, model, system, messages } = options;
+  const { apiKey, model, system, messages, signal } = options;
 
   if (!model) {
     const err = new Error('Ollama provider requires a model name (e.g. gpt-oss:120b-cloud).');
@@ -87,6 +87,7 @@ export async function streamMessageOllama(
         messages: toOllamaMessages(messages, system),
         stream: true,
       }),
+      signal,
     });
 
     if (!res.ok || !res.body) {

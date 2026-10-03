@@ -1,26 +1,51 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { downloadFile } from '../utils/download';
+import { normalizeActivityDetail } from '../utils/activityDetail';
+import { persistableAudioDataUri } from '../utils/audio';
+import { KeyMissingBanner } from '../components/build/artifactHelpers';
+import { QuizTab } from '../components/build/tabs/QuizTab';
+import { WeeklyChallengeTab } from '../components/build/tabs/WeeklyChallengeTab';
+import { InClassQuizTab } from '../components/build/tabs/InClassQuizTab';
+import { DiscussionTab } from '../components/build/tabs/DiscussionTab';
+import { ActivitiesTab } from '../components/build/tabs/ActivitiesTab';
+import { AudioTab } from '../components/build/tabs/AudioTab';
+import { ReadingTab } from '../components/build/tabs/ReadingTab';
+import { SlidesTab } from '../components/build/tabs/SlidesTab';
+import { TemplateModuleTab } from '../components/build/tabs/TemplateModuleTab';
+import { useChapterMaterials } from '../components/build/useChapterMaterials';
+import { ChapterImageRefineDrawer } from '../components/build/ChapterImageRefineDrawer';
+import { ShortcutsHelpOverlay } from '../components/build/ShortcutsHelpOverlay';
+import { TransientToast } from '../components/build/TransientToast';
+import {
+  CHAPTER_ASPECT_TO_SIZE,
+  getChapterImageSrc,
+  swapChapterImage,
+  chapterHasRefinableImages,
+} from '../components/build/chapterImageHelpers';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCourseStore } from '../store/courseStore';
 import { useApiStore } from '../store/apiStore';
-import { useUiStore } from '../store/uiStore';
 import { useTemplateStore } from '../store/templateStore';
+import { useUiStore } from '../store/uiStore';
 import { streamMessage, streamWithRetry } from '../services/claude/streaming';
 import { MODELS } from '../services/claude/client';
 import { buildChapterPrompt, buildChapterUserPrompt } from '../prompts/chapter';
 import { buildPracticeQuizPrompt, buildPracticeQuizUserPrompt } from '../prompts/practiceQuiz';
 import { buildDiscussionPrompt, buildDiscussionUserPrompt } from '../prompts/discussion';
-import { buildActivitiesPrompt, buildActivitiesUserPrompt, buildActivityDetailPrompt, buildActivityDetailUserPrompt } from '../prompts/activities';
+import { buildActivitiesPrompt, buildActivitiesUserPrompt } from '../prompts/activities';
 import { buildInClassQuizPrompt, buildInClassQuizUserPrompt } from '../prompts/inClassQuiz';
 import { buildAudioTranscriptPrompt, buildAudioTranscriptUserPrompt } from '../prompts/audioTranscript';
 import { buildSlidesPrompt, buildSlidesUserPrompt } from '../prompts/slides';
-import { Button } from '../components/shared/Button';
+import { CodexButton as Button } from '../components/codex';
 import { ChapterSidebar } from '../components/build/ChapterSidebar';
 import { ResearchPanel } from '../components/build/ResearchPanel';
-import type { SlideData, InClassQuizQuestion, ActivityDetail, WeeklyChallengeData } from '../types/course';
+import type { SlideData, InClassQuizQuestion, WeeklyChallengeData } from '../types/course';
 import { getVoiceOption } from '../themes';
 import { slugify, extractHtml, parseJson } from '../utils/format';
-import { friendlyError } from '../utils/errors';
+import { friendlyError, isAbortError } from '../utils/errors';
+import { beginAbortable, endAbortable, abortInFlight, materialAbortKey } from '../services/abortRegistry';
+import type { BatchFailure } from '../store/uiStore';
 
 interface DiscussionPrompt {
   prompt: string;
@@ -36,75 +61,322 @@ interface Activity {
   scalingNotes: string;
 }
 
-function downloadFile(content: string | Blob, filename: string, type = 'text/html') {
-  const blob = content instanceof Blob ? content : new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+// downloadFile moved to src/utils/download.ts (imported below).
 
-function formatElapsed(sec: number): string {
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}m ${s}s`;
-}
-
+// formatElapsed moved to ReadingTab (only place it was used).
 // slugify, extractHtml, parseJson moved to src/utils/format.ts
 
-async function replaceGeminiPlaceholders(html: string, apiKey: string): Promise<string> {
-  const { replaceGeminiImagePlaceholders } = await import('../services/gemini/imagePlacer');
-  return replaceGeminiImagePlaceholders(html, apiKey);
+async function replaceAiPlaceholders(html: string, apiKey: string): Promise<string> {
+  const { replaceAiImagePlaceholders } = await import('../services/openai/imagePlacer');
+  return replaceAiImagePlaceholders(html, apiKey);
+}
+
+// Chapter image helpers moved to src/components/build/chapterImageHelpers.ts
+
+/** One-time-hint state, persisted to localStorage so it stays dismissed
+ *  across sessions per-browser. */
+const LS_HINT_PREFIX = 'cb:ui:hintSeen:';
+function readHintSeen(key: string): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    return localStorage.getItem(LS_HINT_PREFIX + key) === '1';
+  } catch {
+    return true;
+  }
+}
+function writeHintSeen(key: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(LS_HINT_PREFIX + key, '1');
+  } catch { /* ignore */ }
 }
 
 export function BuildPage() {
   const navigate = useNavigate();
-  const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setup, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey, geminiApiKey, advancedMode } = useApiStore();
+  const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setSlideImage, updateSlide, setup, setStage, completeStage } = useCourseStore();
+  const { claudeApiKey, openaiApiKey, elevenLabsApiKey, advancedMode } = useApiStore();
   const { templates } = useTemplateStore();
   const activeTemplate = setup.templateId ? templates.find((t) => t.id === setup.templateId) : undefined;
   const examplePatternContent = activeTemplate?.examplePatternContent;
-  const { isGenerating, setIsGenerating, streamingText, setStreamingText, appendStreamingText, error, setError, activeTab, setActiveTab, batchGenerating, batchCurrentChapter, batchPhase, batchMaterial, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial } = useUiStore();
+  const [generatingTemplateContent, setGeneratingTemplateContent] = useState<number | null>(null);
+  const { isGenerating, setIsGenerating, streamingText, setStreamingText, appendStreamingText, error, setError, activeTab, setActiveTab, selectedChapterNum, setSelectedChapterNum, batchGenerating, batchCurrentChapter, batchPhase, batchMaterial, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, batchIndex, batchTotal, batchChapterMs, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, batchSummary, setBatchSummary, slidesRender, setSlidesRender, inFlight, setInFlight, setOpenKeysOnNextSetupVisit } = useUiStore();
 
-  const [selectedChapterNum, setSelectedChapterNum] = useState(1);
+  // Navigate to /setup with the keys modal auto-opening. Used by inline
+  // "Add OpenAI key →" / "Add ElevenLabs key →" CTAs on the Slides and Audio
+  // tabs when the relevant key is missing.
+  const openKeysModal = useCallback(() => {
+    setOpenKeysOnNextSetupVisit(true);
+    navigate('/setup');
+  }, [navigate, setOpenKeysOnNextSetupVisit]);
+
+  // selectedChapterNum now lives in uiStore so it survives reload.
   const [chapterHtml, setChapterHtml] = useState('');
-  const [quizHtml, setQuizHtml] = useState('');
-  const [discussions, setDiscussions] = useState<DiscussionPrompt[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [inClassQuizData, setInClassQuizData] = useState<InClassQuizQuestion[]>([]);
-  const [generatingQuiz, setGeneratingQuiz] = useState<number | null>(null);
-  const [generatingInClassQuiz, setGeneratingInClassQuiz] = useState<number | null>(null);
-  const [generatingDiscussion, setGeneratingDiscussion] = useState<number | null>(null);
-  const [generatingActivities, setGeneratingActivities] = useState<number | null>(null);
-  const [generatingAudio, setGeneratingAudio] = useState<number | null>(null);
-  const [generatingSlides, setGeneratingSlides] = useState<number | null>(null);
-  const [audioTranscript, setAudioTranscript] = useState('');
-  const [audioUrl, setAudioUrl] = useState('');
-  const [audioPhase, setAudioPhase] = useState<'transcript' | 'synthesizing' | null>(null);
-  const [audioError, setAudioError] = useState('');
-  const [audioChunkProgress, setAudioChunkProgress] = useState<{ current: number; total: number } | null>(null);
-  const [slidesData, setSlidesData] = useState<SlideData[]>([]);
+  // Per-artifact "currently generating" state — mirrored from uiStore so
+  // navigating away from /build and back keeps the drafting UI and disabled
+  // CTAs accurate, and the cross-page Header chips stay live.
+  const generatingQuiz = inFlight.quiz ?? null;
+  const generatingInClassQuiz = inFlight.inclassquiz ?? null;
+  const generatingDiscussion = inFlight.discussion ?? null;
+  const generatingActivities = inFlight.activities ?? null;
+  const generatingAudio = inFlight.audio ?? null;
+  const generatingSlides = inFlight.slides ?? null;
+  const generatingWeeklyChallenge = inFlight.weeklychallenge ?? null;
+  const setGeneratingQuiz = useCallback((v: number | null) => setInFlight('quiz', v), [setInFlight]);
+  const setGeneratingInClassQuiz = useCallback((v: number | null) => setInFlight('inclassquiz', v), [setInFlight]);
+  const setGeneratingDiscussion = useCallback((v: number | null) => setInFlight('discussion', v), [setInFlight]);
+  const setGeneratingActivities = useCallback((v: number | null) => setInFlight('activities', v), [setInFlight]);
+  const setGeneratingAudio = useCallback((v: number | null) => setInFlight('audio', v), [setInFlight]);
+  const setGeneratingSlides = useCallback((v: number | null) => setInFlight('slides', v), [setInFlight]);
+  const setGeneratingWeeklyChallenge = useCallback((v: number | null) => setInFlight('weeklychallenge', v), [setInFlight]);
+
   const [thinkingText, setThinkingText] = useState('');
   const [refineFeedback, setRefineFeedback] = useState('');
   const [showRefineConfirm, setShowRefineConfirm] = useState(false);
-  const [expandedActivities, setExpandedActivities] = useState<Record<number, ActivityDetail>>({});
-  const [expandedSlideNotes, setExpandedSlideNotes] = useState<Set<number>>(new Set());
-  const [expandingActivity, setExpandingActivity] = useState<number | null>(null);
+  /** Which chapter (if any) is currently in the chapter-drafting pipeline.
+   *  Distinct from uiStore.isGenerating (which is global). Lets ReadingTab
+   *  show the drafting UI ONLY on the chapter that's actually being drafted,
+   *  not whichever chapter the user has clicked to. */
+  const [chapterDraftingFor, setChapterDraftingFor] = useState<number | null>(null);
+  /** True while a refine is in flight — drives the streaming UI to show
+   *  "Refining…" feedback instead of the old iframe. */
+  const [isRefining, setIsRefining] = useState(false);
+  /** Confirm-panel checkbox: when a refine clears dependent materials,
+   *  should we automatically regenerate them once the new reading lands? */
+  const [refineAutoRegen, setRefineAutoRegen] = useState(true);
+  /** Ref to the latest generateAllOutputs callback so refineChapter can
+   *  schedule a post-refine regen using the *new* chapter content (the
+   *  callback recreates after updateChapter fires). */
+  const generateAllOutputsRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  // Per-slide image refine state. Edited prompts live here until the user
+  // either regenerates (commits) or hits Reset. `refiningSlideIdx` is the
+  // index currently being rendered through gpt-image-2.
+  const [editedSlidePrompts, setEditedSlidePrompts] = useState<Record<number, string>>({});
+  const [refiningSlideIdx, setRefiningSlideIdx] = useState<number | null>(null);
+  const [slideRefineError, setSlideRefineError] = useState<string | null>(null);
+
+  // Per-image chapter refine. When the user clicks an image inside the chapter
+  // iframe, the shim postMessages here and we open a drawer with the original
+  // prompt + the rendered image. Edits commit only when Regenerate succeeds.
+  const [chapterImageRefine, setChapterImageRefine] = useState<
+    { idx: number; prompt: string; aspect: string; src: string } | null
+  >(null);
+  const [chapterImageDraft, setChapterImageDraft] = useState('');
+  const [chapterImageRefining, setChapterImageRefining] = useState(false);
+  const [chapterImageRefineError, setChapterImageRefineError] = useState<string | null>(null);
+  // One-time discoverability hints — surfaced inline until the user dismisses
+  // or auto-dismissed after 12s once the relevant artifact has rendered.
+  const [showChapterImageHint, setShowChapterImageHint] = useState<boolean>(() => !readHintSeen('chapter-image-refine'));
+  const [showSlideImageHint, setShowSlideImageHint] = useState<boolean>(() => !readHintSeen('slide-image-refine'));
   const [copiedLabel, setCopiedLabel] = useState('');
-  const [infographicDataUri, setInfographicDataUri] = useState('');
-  const [generatingInfographic, setGeneratingInfographic] = useState<number | null>(null);
-  const [weeklyChallengeHtml, setWeeklyChallengeHtml] = useState('');
-  const [generatingWeeklyChallenge, setGeneratingWeeklyChallenge] = useState<number | null>(null);
-  const [generatingTemplateContent, setGeneratingTemplateContent] = useState<number | null>(null);
-  const [tabErrors, setTabErrors] = useState<Record<string, string>>({});
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const autoGenStarted = useRef(false);
   const selectedChapterRef = useRef(selectedChapterNum);
   const batchCancelRef = useRef(false);
+
+  // Derived: the chapter currently in view from courseStore.
+  const currentChapterEarly = chapters.find((c) => c.number === selectedChapterNum);
+  const syllabusChapterEarly = syllabus?.chapters.find((c) => c.number === selectedChapterNum);
+
+  // ── All per-chapter material state + generation handlers ─────────────
+  // Quiz, in-class quiz, weekly challenge, discussion, activities, audio,
+  // slides — plus retryAudio + fleshOutActivity — all live in a single
+  // hook. BuildPage gets the read-only state values back and wires them
+  // into the tab components.
+  const materials = useChapterMaterials({
+    syllabus,
+    currentChapter: currentChapterEarly,
+    syllabusChapter: syllabusChapterEarly,
+    selectedChapterNum,
+    selectedChapterRef,
+    claudeApiKey,
+    elevenLabsApiKey,
+    setup,
+    updateChapter,
+    setError,
+    setGeneratingQuiz,
+    setGeneratingInClassQuiz,
+    setGeneratingWeeklyChallenge,
+    setGeneratingDiscussion,
+    setGeneratingActivities,
+    setGeneratingAudio,
+    setGeneratingSlides,
+  });
+  const {
+    quizHtml,
+    inClassQuizData,
+    weeklyChallengeHtml,
+    discussions,
+    activities,
+    audioTranscript,
+    audioUrl,
+    audioError,
+    audioPersistNote,
+    audioPhase,
+    audioChunkProgress,
+    slidesData,
+    setSlidesData,
+    expandedActivities,
+    setExpandedActivities,
+    expandingActivity,
+    tabErrors,
+    setTabError,
+    clearTabError,
+    generateQuiz,
+    generateInClassQuiz,
+    generateWeeklyChallenge: generateWeeklyChallengeContent,
+    generateDiscussion,
+    generateActivities,
+    generateAudio,
+    generateSlides,
+    retryAudio,
+    fleshOutActivity,
+  } = materials;
+
+  // Clamp the persisted selectedChapterNum if the new syllabus is shorter
+  // than the chapter index we last saved (e.g. user starts a smaller course).
+  useEffect(() => {
+    if (!syllabus) return;
+    const max = syllabus.chapters.length;
+    if (selectedChapterNum < 1 || selectedChapterNum > max) {
+      setSelectedChapterNum(1);
+    }
+  }, [syllabus, selectedChapterNum, setSelectedChapterNum]);
+
+  // Auto-dismiss the chapter-image hint 12s after it becomes relevant.
+  useEffect(() => {
+    if (!showChapterImageHint) return;
+    if (!chapterHtml || !chapterHasRefinableImages(chapterHtml)) return;
+    const id = setTimeout(() => {
+      setShowChapterImageHint(false);
+      writeHintSeen('chapter-image-refine');
+    }, 12000);
+    return () => clearTimeout(id);
+  }, [showChapterImageHint, chapterHtml]);
+
+  // Dismiss the chapter-image hint as soon as the user opens the refine drawer.
+  useEffect(() => {
+    if (chapterImageRefine && showChapterImageHint) {
+      setShowChapterImageHint(false);
+      writeHintSeen('chapter-image-refine');
+    }
+  }, [chapterImageRefine, showChapterImageHint]);
+
+  // Auto-dismiss the slide-image hint after 12s of slidesData being populated.
+  useEffect(() => {
+    if (!showSlideImageHint) return;
+    if (slidesData.length === 0) return;
+    const id = setTimeout(() => {
+      setShowSlideImageHint(false);
+      writeHintSeen('slide-image-refine');
+    }, 12000);
+    return () => clearTimeout(id);
+  }, [showSlideImageHint, slidesData.length]);
+
+  // Dismiss the slide-image hint as soon as the user starts a refine.
+  useEffect(() => {
+    if (refiningSlideIdx !== null && showSlideImageHint) {
+      setShowSlideImageHint(false);
+      writeHintSeen('slide-image-refine');
+    }
+  }, [refiningSlideIdx, showSlideImageHint]);
+
+  const dismissChapterImageHint = useCallback(() => {
+    setShowChapterImageHint(false);
+    writeHintSeen('chapter-image-refine');
+  }, []);
+  const dismissSlideImageHint = useCallback(() => {
+    setShowSlideImageHint(false);
+    writeHintSeen('slide-image-refine');
+  }, []);
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────
+  //
+  // Bound to the document so they fire from anywhere on the Build page,
+  // except when the user is typing in an input/textarea. Skipped entirely
+  // while batch generation is running so accidental keystrokes can't
+  // disrupt a multi-chapter run.
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+  const [transientToast, setTransientToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!transientToast) return;
+    const id = setTimeout(() => setTransientToast(null), 2400);
+    return () => clearTimeout(id);
+  }, [transientToast]);
+
+  // Static list of tab IDs in display order — drives the 1..8 shortcut.
+  // Note: this stays in sync with the `tabs` array assembled inside the JSX.
+  const SHORTCUT_TAB_IDS = [
+    ...(setup.templateId ? ['template-module'] : []),
+    'chapter', 'quiz', 'inclassquiz', 'discussion',
+    ...(advancedMode ? ['weeklychallenge', 'activities', 'audio', 'slides'] : []),
+  ];
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      // Don't intercept while the user is typing.
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      // Don't intercept during batch — keystrokes could derail a multi-min run.
+      if (batchGenerating) return;
+
+      // Cmd/Ctrl + S → catch the save instinct with a reassurance toast.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setTransientToast('No need to save — every change is auto-saved to this browser.');
+        return;
+      }
+      // ? → toggle the help overlay.
+      if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsHelpOpen((v) => !v);
+        return;
+      }
+
+      // No other modifier-required shortcuts.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // 1..8 → switch tab.
+      if (/^[1-8]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        if (SHORTCUT_TAB_IDS[idx]) {
+          e.preventDefault();
+          setActiveTab(SHORTCUT_TAB_IDS[idx]);
+        }
+        return;
+      }
+      // J / K → next / previous chapter.
+      if (e.key === 'j' || e.key === 'J') {
+        if (syllabus && selectedChapterNum < syllabus.chapters.length) {
+          e.preventDefault();
+          setSelectedChapterNum(selectedChapterNum + 1);
+        }
+        return;
+      }
+      if (e.key === 'k' || e.key === 'K') {
+        if (selectedChapterNum > 1) {
+          e.preventDefault();
+          setSelectedChapterNum(selectedChapterNum - 1);
+        }
+        return;
+      }
+      // G → generate all materials for the current chapter.
+      if (e.key === 'g' || e.key === 'G') {
+        e.preventDefault();
+        void generateAllOutputsRef.current();
+        return;
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchGenerating, syllabus, selectedChapterNum, setActiveTab, setSelectedChapterNum, setup.templateId, advancedMode]);
 
   // Tick elapsed seconds while a single-chapter generation is running so the
   // "Thinking..." phase (~30-90s on Opus) shows observable progress.
@@ -137,8 +409,8 @@ export function BuildPage() {
   // Derived state
   const currentChapter = chapters.find(c => c.number === selectedChapterNum);
   const syllabusChapter = syllabus?.chapters.find(c => c.number === selectedChapterNum);
-  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingInfographic || generatingWeeklyChallenge || generatingTemplateContent);
-  const anyBusy = isGenerating || anyLocalGenerating || batchGenerating;
+  const anyLocalGenerating = !!(generatingQuiz || generatingInClassQuiz || generatingDiscussion || generatingActivities || generatingAudio || generatingSlides || generatingWeeklyChallenge);
+  const anyBusy = isGenerating || anyLocalGenerating || batchGenerating || generatingTemplateContent !== null;
 
   const tabGenerating: Record<string, boolean> = {
     quiz: generatingQuiz === selectedChapterNum,
@@ -147,23 +419,11 @@ export function BuildPage() {
     activities: generatingActivities === selectedChapterNum,
     audio: generatingAudio === selectedChapterNum,
     slides: generatingSlides === selectedChapterNum,
-    infographic: generatingInfographic === selectedChapterNum,
     weeklychallenge: generatingWeeklyChallenge === selectedChapterNum,
     'template-module': generatingTemplateContent === selectedChapterNum,
   };
 
-  const setTabError = useCallback((tab: string, msg: string) => {
-    setTabErrors(prev => ({ ...prev, [tab]: msg }));
-  }, []);
-
-  const clearTabError = useCallback((tab: string) => {
-    setTabErrors(prev => {
-      if (!prev[tab]) return prev;
-      const next = { ...prev };
-      delete next[tab];
-      return next;
-    });
-  }, []);
+  // setTabError + clearTabError moved into useChapterMaterials.
 
   const copyToClipboard = useCallback(async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -193,7 +453,7 @@ export function BuildPage() {
       lines.push(`Learning Goal: ${a.learningGoal}`);
       lines.push(`Scaling: ${a.scalingNotes}`);
 
-      const detail = expandedActivities[i];
+      const detail = normalizeActivityDetail(expandedActivities[i]);
       if (detail) {
         lines.push('');
         lines.push(`--- Step-by-Step Guide ---`);
@@ -230,74 +490,18 @@ export function BuildPage() {
     return lines.join('\n');
   }, [activities, expandedActivities, syllabusChapter]);
 
-  // Restore local state when switching chapters or when chapter data appears
+  // Reset BuildPage-owned local state on chapter switch, then hydrate
+  // chapterHtml from the courseStore-persisted chapter (if any). All material
+  // state (quiz/discussion/audio/slides/etc.) is managed inside
+  // useChapterMaterials; its own effect handles reset + rehydrate.
   useEffect(() => {
     setChapterHtml('');
-    setQuizHtml('');
-    setInClassQuizData([]);
-    setDiscussions([]);
-    setActivities([]);
-    setAudioTranscript('');
-    setAudioUrl('');
-    setSlidesData([]);
-    setInfographicDataUri('');
-    setWeeklyChallengeHtml('');
     setThinkingText('');
     setRefineFeedback('');
     setShowRefineConfirm(false);
-    setExpandedActivities({});
-    setExpandingActivity(null);
-    setAudioChunkProgress(null);
-    setAudioError('');
-    setTabErrors({});
-
-    const ch = chapters.find(c => c.number === selectedChapterNum);
-    if (ch) {
-      setChapterHtml(ch.htmlContent);
-      if (ch.inClassQuizData && ch.inClassQuizData.length > 0) setInClassQuizData(ch.inClassQuizData);
-      if (ch.discussionData && ch.discussionData.length > 0) setDiscussions(ch.discussionData);
-      if (ch.activityData && ch.activityData.length > 0) setActivities(ch.activityData);
-      if (ch.activityDetails) setExpandedActivities(ch.activityDetails);
-      if (ch.audioTranscript) setAudioTranscript(ch.audioTranscript);
-      if (ch.audioUrl) setAudioUrl(ch.audioUrl);
-      if (ch.slidesJson && ch.slidesJson.length > 0) setSlidesData(ch.slidesJson);
-      if (ch.infographicDataUri) setInfographicDataUri(ch.infographicDataUri);
-      if (ch.practiceQuizData && syllabus) {
-        const syllCh = syllabus.chapters.find(sc => sc.number === selectedChapterNum);
-        (async () => {
-          try {
-            const { buildQuizHtml } = await import('../templates/quizTemplate');
-            const html = buildQuizHtml(
-              `${syllCh?.title || ch.title} — Practice Quiz`,
-              ch.practiceQuizData!,
-              syllabus.courseTitle,
-              setup.themeId,
-            );
-            setQuizHtml(html);
-          } catch {
-            // Quiz template failed to load
-          }
-        })();
-      }
-      if (ch.weeklyChallengeData && syllabus) {
-        const syllCh = syllabus.chapters.find(sc => sc.number === selectedChapterNum);
-        (async () => {
-          try {
-            const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
-            const html = buildWeeklyChallengeHtml(
-              `Week ${selectedChapterNum} Challenge — ${syllCh?.title || ch.title}`,
-              ch.weeklyChallengeData!,
-              syllabus.courseTitle,
-              setup.themeId,
-            );
-            setWeeklyChallengeHtml(html);
-          } catch {
-            // Weekly challenge template failed to load
-          }
-        })();
-      }
-    }
-  }, [selectedChapterNum, chapters, syllabus]);
+    const ch = chapters.find((c) => c.number === selectedChapterNum);
+    if (ch) setChapterHtml(ch.htmlContent);
+  }, [selectedChapterNum, chapters]);
 
   // Auto-generate chapter 1 on first mount if not already generated and has research
   useEffect(() => {
@@ -314,7 +518,10 @@ export function BuildPage() {
     const ch = syllabus.chapters.find(c => c.number === chapterNum);
     if (!ch) return;
 
+    const abortKey = materialAbortKey('reading', chapterNum);
+    const controller = beginAbortable(abortKey);
     setIsGenerating(true);
+    setChapterDraftingFor(chapterNum);
     setStreamingText('');
     setThinkingText('');
 
@@ -329,35 +536,37 @@ export function BuildPage() {
         doi: s.doi,
       }));
 
-      const hasGemini = !!geminiApiKey;
+      const hasImageGen = !!openaiApiKey;
       const fullText = await streamMessage(
         {
           apiKey: claudeApiKey,
           model: MODELS.opus,
-          system: buildChapterPrompt(setup.themeId, hasGemini),
+          system: buildChapterPrompt(setup.themeId, hasImageGen),
           messages: [{
             role: 'user',
             content: buildChapterUserPrompt(
               syllabus.courseTitle,
               ch,
               setup.chapterLength,
+              { educationLevel: setup.educationLevel, priorKnowledge: setup.priorKnowledge, learnerNotes: setup.learnerNotes },
               researchSources,
-              hasGemini,
+              hasImageGen,
+              setup.chapterLengthBrief,
             ),
           }],
           thinkingBudget: 'high',
           maxTokens: 16000,
+          signal: controller.signal,
         },
         {
           onThinking: (text) => setThinkingText(prev => prev + text),
           onText: (text) => appendStreamingText(text),
-          onError: (err) => setError(err.message),
         }
       );
 
       let html = extractHtml(fullText);
-      if (hasGemini) {
-        html = await replaceGeminiPlaceholders(html, geminiApiKey);
+      if (hasImageGen) {
+        html = await replaceAiPlaceholders(html, openaiApiKey);
       }
 
       if (selectedChapterRef.current === chapterNum) setChapterHtml(html);
@@ -367,12 +576,15 @@ export function BuildPage() {
         htmlContent: html,
       });
     } catch (err) {
-      setError(friendlyError(err, 'Chapter generation failed.'));
+      // A user Stop is a silent cancel — the partial stream is discarded.
+      if (!isAbortError(err)) setError(friendlyError(err, 'Chapter generation failed.'));
     } finally {
+      endAbortable(abortKey, controller);
       setIsGenerating(false);
+      setChapterDraftingFor(null);
       setThinkingText('');
     }
-  }, [syllabus, claudeApiKey, geminiApiKey, researchDossiers, setup.chapterLength, addChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
+  }, [syllabus, claudeApiKey, openaiApiKey, researchDossiers, setup.chapterLength, addChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
 
   const refineChapter = useCallback(async (feedback: string) => {
     if (!syllabus || !currentChapter || !syllabusChapter) return;
@@ -387,18 +599,16 @@ export function BuildPage() {
       audioUrl: undefined,
       slidesJson: undefined,
     });
-    setQuizHtml('');
-    setInClassQuizData([]);
-    setDiscussions([]);
-    setActivities([]);
-    setAudioTranscript('');
-    setAudioUrl('');
-    setSlidesData([]);
-    setExpandedActivities({});
+    // updateChapter above cleared dependent materials in courseStore;
+    // useChapterMaterials' reset effect will wipe the local mirrors.
     setRefineFeedback('');
     setShowRefineConfirm(false);
 
+    const abortKey = materialAbortKey('reading', selectedChapterNum);
+    const controller = beginAbortable(abortKey);
+    setIsRefining(true);
     setIsGenerating(true);
+    setChapterDraftingFor(selectedChapterNum);
     setStreamingText('');
     setThinkingText('');
 
@@ -409,548 +619,319 @@ export function BuildPage() {
         summary: s.summary, url: s.url, doi: s.doi,
       }));
 
-      const hasGemini = !!geminiApiKey;
+      const hasImageGen = !!openaiApiKey;
+      // Single-turn refine. Folding the existing chapter into the user message
+      // (rather than replaying it as a prior assistant turn) keeps the request
+      // compatible with extended thinking, which otherwise requires every
+      // prior assistant turn to carry its original thinking block.
+      //
+      // Strip inline image base64 — each rendered <img src="data:..."> can be
+      // 100K+ tokens, and a chapter with two or three of them blows past
+      // Claude's 1M context window. The model doesn't need the pixels to
+      // revise prose; it just needs to see where the figures sit.
+      const sanitizedHtml = currentChapter.htmlContent
+        .replace(/src="data:[^;]+;base64,[^"]+"/gi, 'src="[ai-generated-image]"')
+        .replace(/src='data:[^;]+;base64,[^']+'/gi, "src='[ai-generated-image]'");
+
+      const originalPrompt = buildChapterUserPrompt(
+        syllabus.courseTitle,
+        syllabusChapter,
+        setup.chapterLength,
+        { educationLevel: setup.educationLevel, priorKnowledge: setup.priorKnowledge, learnerNotes: setup.learnerNotes },
+        researchSources,
+        hasImageGen,
+        setup.chapterLengthBrief,
+      );
+      const refinePrompt = `${originalPrompt}
+
+A draft of this chapter already exists. Revise it to address the feedback below — keep the same \`<article class="ch">…</article>\` markup contract, the same class names, and the same interactive widgets. Re-emit \`<figure class="ai-image" data-prompt="…" data-aspect="…">\` placeholders for any images (don't try to reproduce existing image bytes — they were stripped from the input to save context). Output ONLY the revised article (plus any widget \`<script>\` tags), exactly as the contract specifies.
+
+Existing draft to revise (image bytes stripped to \`[ai-generated-image]\`):
+\`\`\`html
+${sanitizedHtml}
+\`\`\`
+
+Teacher feedback: "${feedback}"`;
+
       const fullText = await streamMessage(
         {
           apiKey: claudeApiKey,
           model: MODELS.opus,
-          system: buildChapterPrompt(setup.themeId, hasGemini),
-          messages: [
-            {
-              role: 'user',
-              content: buildChapterUserPrompt(
-                syllabus.courseTitle,
-                syllabusChapter,
-                setup.chapterLength,
-                researchSources,
-                hasGemini,
-              ),
-            },
-            {
-              role: 'assistant',
-              content: currentChapter.htmlContent,
-            },
-            {
-              role: 'user',
-              content: `Please revise this chapter based on the following feedback. Maintain the same HTML structure, design system, and interactive widgets. Output ONLY the complete revised HTML.\n\nFeedback: "${feedback}"`,
-            },
-          ],
+          system: buildChapterPrompt(setup.themeId, hasImageGen),
+          messages: [{ role: 'user', content: refinePrompt }],
           thinkingBudget: 'high',
           maxTokens: 16000,
+          signal: controller.signal,
         },
         {
           onThinking: (text) => setThinkingText(prev => prev + text),
           onText: (text) => appendStreamingText(text),
-          onError: (err) => setError(err.message),
         }
       );
 
       let html = extractHtml(fullText);
-      if (hasGemini) {
-        html = await replaceGeminiPlaceholders(html, geminiApiKey);
+      if (hasImageGen) {
+        html = await replaceAiPlaceholders(html, openaiApiKey);
       }
       setChapterHtml(html);
       updateChapter(selectedChapterNum, { htmlContent: html });
+
+      // If the user opted in, automatically rebuild quizzes/discussion/etc.
+      // against the new reading. The setTimeout lets React flush the chapter
+      // state update so the refreshed generateAllOutputs callback reads from
+      // the new content, not the pre-refine snapshot.
+      if (refineAutoRegen) {
+        setTimeout(() => {
+          void generateAllOutputsRef.current();
+        }, 250);
+      }
     } catch (err) {
-      setError(friendlyError(err, 'Chapter refinement failed.'));
+      if (isAbortError(err)) {
+        // User stopped the refine — old reading is untouched; cleared
+        // materials stay cleared (the confirm warned about that).
+      } else {
+        // Surface the raw API error to the console so we can diagnose what
+        // Anthropic actually rejected. The user-visible toast stays friendly.
+        console.error('Chapter refinement failed:', err);
+        if (err && typeof err === 'object') {
+          const anyErr = err as { status?: number; message?: string; error?: unknown };
+          if (anyErr.status !== undefined) console.error('  status:', anyErr.status);
+          if (anyErr.error) console.error('  error body:', anyErr.error);
+        }
+        setError(friendlyError(err, 'Chapter refinement failed.'));
+      }
     } finally {
+      endAbortable(abortKey, controller);
       setIsGenerating(false);
+      setIsRefining(false);
+      setChapterDraftingFor(null);
       setThinkingText('');
     }
-  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, geminiApiKey, researchDossiers, setup.chapterLength, updateChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
+  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, openaiApiKey, researchDossiers, setup.chapterLength, updateChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
 
-  const generateQuiz = useCallback(async () => {
-    if (!syllabus || !currentChapter || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingQuiz(capturedChapter);
-    clearTabError('quiz');
+  // 7 generators + retryAudio + fleshOutActivity moved to useChapterMaterials hook.
 
-    try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          model: MODELS.opus,
-          system: buildPracticeQuizPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildPracticeQuizUserPrompt(syllabusChapter.title, syllabusChapter.narrative, syllabusChapter.keyConcepts, currentChapter.htmlContent?.slice(0, 3000)),
-          }],
-          thinkingBudget: 'max',
-          maxTokens: 8000,
-        },
-        {}
-      );
 
-      // Balance answer lengths (silent post-processing)
-      const { balancePracticeQuiz } = await import('../services/quiz/answerBalancer');
-      const balancedText = await balancePracticeQuiz(fullText, claudeApiKey);
-
-      updateChapter(capturedChapter, { practiceQuizData: balancedText });
-
-      if (selectedChapterRef.current === capturedChapter) {
-        try {
-          const { buildQuizHtml } = await import('../templates/quizTemplate');
-          const html = buildQuizHtml(
-            `${syllabusChapter.title} — Practice Quiz`,
-            balancedText,
-            syllabus.courseTitle,
-            setup.themeId,
-          );
-          setQuizHtml(html);
-        } catch {
-          const fallbackHtml = `<!DOCTYPE html><html><head><style>
-            body { background: #0f0f1a; color: #f1f5f9; font-family: system-ui; padding: 2rem; line-height: 1.8; }
-            strong { color: #a78bfa; }
-            hr { border-color: #252540; margin: 1.5rem 0; }
-          </style></head><body><pre style="white-space:pre-wrap">${fullText.replace(/</g, '&lt;')}</pre></body></html>`;
-          setQuizHtml(fallbackHtml);
-        }
+  // ── Per-slide image refine ──────────────────────────────────────────
+  //
+  // Refine one slide's image without disturbing the rest of the deck.
+  // The user edits the imagePrompt textarea in-place; on Regenerate we call
+  // gpt-image-2 with the new prompt, atomically update slidesJson[i] in
+  // courseStore (both prompt and image), and mirror the change into the
+  // local slidesData state so the row's "rendered" chip and any later deck
+  // download pick up the new render.
+  const refineSlideImage = useCallback(
+    async (idx: number) => {
+      if (!openaiApiKey || refiningSlideIdx !== null) return;
+      const slide = slidesData[idx];
+      if (!slide) return;
+      const draft = editedSlidePrompts[idx];
+      const newPrompt = (draft ?? slide.imagePrompt ?? '').trim();
+      if (!newPrompt) {
+        setSlideRefineError('Image prompt is empty.');
+        return;
       }
-    } catch (err) {
-      setTabError('quiz', friendlyError(err, 'Quiz generation failed.'));
-    } finally {
-      setGeneratingQuiz(null);
-    }
-  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, updateChapter, setTabError, clearTabError]);
-
-  const generateInClassQuiz = useCallback(async () => {
-    if (!syllabus || !currentChapter || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingInClassQuiz(capturedChapter);
-    clearTabError('inclassquiz');
-
-    try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          model: MODELS.opus,
-          system: buildInClassQuizPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildInClassQuizUserPrompt(syllabusChapter.title, syllabusChapter.narrative, syllabusChapter.keyConcepts, currentChapter.htmlContent?.slice(0, 3000)),
-          }],
-          thinkingBudget: 'max',
-          maxTokens: 8000,
-        },
-        {}
-      );
-
+      setRefiningSlideIdx(idx);
+      setSlideRefineError(null);
       try {
-        const parsed = parseJson(fullText) as InClassQuizQuestion[];
-        const { balanceInClassQuiz } = await import('../services/quiz/answerBalancer');
-        const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
-        if (selectedChapterRef.current === capturedChapter) setInClassQuizData(balanced);
-        updateChapter(capturedChapter, { inClassQuizData: balanced });
-      } catch {
-        setTabError('inclassquiz', 'Failed to parse in-class quiz data');
-      }
-    } catch (err) {
-      setTabError('inclassquiz', friendlyError(err, 'In-class quiz generation failed.'));
-    } finally {
-      setGeneratingInClassQuiz(null);
-    }
-  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, updateChapter, setTabError, clearTabError]);
-
-  const generateWeeklyChallengeContent = useCallback(async () => {
-    if (!syllabus || !currentChapter || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingWeeklyChallenge(capturedChapter);
-    clearTabError('weeklychallenge');
-
-    try {
-      const priorChapters = (syllabusChapter.spacingConnections || [])
-        .map(n => syllabus.chapters.find(c => c.number === n))
-        .filter((c): c is NonNullable<typeof c> => !!c)
-        .map(c => ({ number: c.number, title: c.title, keyConcepts: c.keyConcepts }));
-
-      const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
-
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          model: MODELS.opus,
-          system: buildWeeklyChallengePrompt(),
-          messages: [{
-            role: 'user',
-            content: buildWeeklyChallengeUserPrompt(
-              syllabusChapter.title,
-              syllabusChapter.narrative,
-              syllabusChapter.keyConcepts,
-              currentChapter.htmlContent?.slice(0, 3000),
-              syllabusChapter.number,
-              priorChapters,
-            ),
-          }],
-          thinkingBudget: 'high',
-          maxTokens: 10000,
-        },
-        {}
-      );
-
-      try {
-        const parsed = parseJson(fullText, '{') as WeeklyChallengeData;
-        updateChapter(capturedChapter, { weeklyChallengeData: parsed });
-
-        if (selectedChapterRef.current === capturedChapter) {
-          try {
-            const { buildWeeklyChallengeHtml } = await import('../templates/weeklyChallengeTemplate');
-            const html = buildWeeklyChallengeHtml(
-              `Week ${capturedChapter} Challenge — ${syllabusChapter.title}`,
-              parsed,
-              syllabus.courseTitle,
-              setup.themeId,
-            );
-            setWeeklyChallengeHtml(html);
-          } catch {
-            // Template failed
-          }
-        }
-      } catch {
-        setTabError('weeklychallenge', 'Failed to parse weekly challenge data');
-      }
-    } catch (err) {
-      setTabError('weeklychallenge', friendlyError(err, 'Weekly challenge generation failed.'));
-    } finally {
-      setGeneratingWeeklyChallenge(null);
-    }
-  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, setup.themeId, updateChapter, setTabError, clearTabError]);
-
-  const generateDiscussion = useCallback(async () => {
-    if (!syllabus || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingDiscussion(capturedChapter);
-    clearTabError('discussion');
-
-    try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          system: buildDiscussionPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildDiscussionUserPrompt(syllabusChapter.title, syllabusChapter.keyConcepts, setup.cohortSize, setup.teachingEnvironment),
-          }],
-          thinkingBudget: 'medium',
-          maxTokens: 4000,
-        },
-        {}
-      );
-
-      try {
-        const parsed = parseJson(fullText) as DiscussionPrompt[];
-        if (selectedChapterRef.current === capturedChapter) setDiscussions(parsed);
-        updateChapter(capturedChapter, { discussionData: parsed });
-      } catch {
-        setTabError('discussion', 'Failed to parse discussion prompts');
-      }
-    } catch (err) {
-      setTabError('discussion', friendlyError(err, 'Discussion generation failed.'));
-    } finally {
-      setGeneratingDiscussion(null);
-    }
-  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup.cohortSize, setup.teachingEnvironment, updateChapter, setTabError, clearTabError]);
-
-  const generateActivities = useCallback(async () => {
-    if (!syllabus || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingActivities(capturedChapter);
-    clearTabError('activities');
-
-    try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          system: buildActivitiesPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildActivitiesUserPrompt(syllabusChapter.title, syllabusChapter.keyConcepts, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes),
-          }],
-          thinkingBudget: 'medium',
-          maxTokens: 4000,
-        },
-        {}
-      );
-
-      try {
-        const parsed = parseJson(fullText) as Activity[];
-        if (selectedChapterRef.current === capturedChapter) setActivities(parsed);
-        updateChapter(capturedChapter, { activityData: parsed });
-      } catch {
-        setTabError('activities', 'Failed to parse activities');
-      }
-    } catch (err) {
-      setTabError('activities', friendlyError(err, 'Activities generation failed.'));
-    } finally {
-      setGeneratingActivities(null);
-    }
-  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes, updateChapter, setTabError, clearTabError]);
-
-  const generateTemplateContent = useCallback(async () => {
-    if (!syllabus || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingTemplateContent(capturedChapter);
-    clearTabError('template-module');
-
-    try {
-      const { generateTemplateChapter } = await import('../services/template/generateChapter');
-      const { content } = await generateTemplateChapter({
-        apiKey: claudeApiKey,
-        setup,
-        chapter: syllabusChapter,
-        courseTitle: syllabus.courseTitle,
-        courseOverview: syllabus.courseOverview,
-        examplePatternContent,
-      });
-      updateChapter(capturedChapter, { templateContent: content });
-    } catch (err) {
-      setTabError('template-module', friendlyError(err, 'Canvas module generation failed.'));
-    } finally {
-      setGeneratingTemplateContent(null);
-    }
-  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, examplePatternContent, updateChapter, setTabError, clearTabError]);
-
-  const generateAllCanvasModules = useCallback(async () => {
-    if (!syllabus) return;
-    setBatchGenerating(true);
-    setBatchMaterial('Canvas module');
-    batchCancelRef.current = false;
-
-    try {
-      const pending = syllabus.chapters.filter((ch) => {
-        const generated = chapters.find((c) => c.number === ch.number);
-        return !generated?.templateContent;
-      });
-
-      const { generateTemplateChapter } = await import('../services/template/generateChapter');
-
-      for (const ch of pending) {
-        if (batchCancelRef.current) break;
-        setBatchCurrentChapter(ch.number);
-        setBatchPhase('thinking');
-        try {
-          const { content } = await generateTemplateChapter({
-            apiKey: claudeApiKey,
-            setup,
-            chapter: ch,
-            courseTitle: syllabus.courseTitle,
-            courseOverview: syllabus.courseOverview,
-            examplePatternContent,
-            onText: () => setBatchPhase('writing'),
-          });
-          updateChapter(ch.number, { templateContent: content });
-        } catch (err) {
-          setError(
-            friendlyError(err, `Canvas module generation failed for Class ${ch.number}.`),
-          );
-          // Move on to the next chapter rather than aborting the batch — one
-          // bad chapter shouldn't block the rest.
-        }
-      }
-    } finally {
-      batchCancelRef.current = false;
-      setBatchCurrentChapter(null);
-      setBatchPhase(null);
-      setBatchMaterial(null);
-      setBatchGenerating(false);
-    }
-  }, [syllabus, chapters, claudeApiKey, setup, examplePatternContent, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
-
-  const fleshOutActivity = useCallback(async (index: number) => {
-    if (!syllabusChapter || expandingActivity !== null) return;
-    const activity = activities[index];
-    if (!activity) return;
-
-    setExpandingActivity(index);
-
-    try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          model: MODELS.haiku,
-          system: buildActivityDetailPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildActivityDetailUserPrompt(activity, syllabusChapter.title, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes),
-          }],
-          thinkingBudget: 'low',
-          maxTokens: 8000,
-        },
-        {}
-      );
-
-      try {
-        const parsed = parseJson(fullText, '{') as ActivityDetail;
-        setExpandedActivities(prev => {
-          const updated = { ...prev, [index]: parsed };
-          updateChapter(selectedChapterNum, { activityDetails: updated });
-          return updated;
+        const [{ generateImageWithRetry }, { withSafetyClause }] = await Promise.all([
+          import('../services/openai/imageGen'),
+          import('../services/openai/safetyClause'),
+        ]);
+        const dataUri = await generateImageWithRetry(
+          withSafetyClause(newPrompt),
+          openaiApiKey,
+          { size: '3840x2160', quality: 'high', compression: 88 },
+        );
+        // Mirror to local state so the row immediately reflects the new render.
+        setSlidesData((prev) =>
+          prev.map((s, i) =>
+            i === idx ? { ...s, imagePrompt: newPrompt, imageDataUri: dataUri } : s,
+          ),
+        );
+        // Persist atomically — both prompt and image — so a tab-switch /
+        // refresh never loses the edited prompt.
+        updateSlide(selectedChapterNum, idx, {
+          imagePrompt: newPrompt,
+          imageDataUri: dataUri,
         });
-      } catch (parseErr) {
-        setError(`Failed to parse activity details: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+        // Clear this slide's draft now that it's committed.
+        setEditedSlidePrompts((prev) => {
+          const next = { ...prev };
+          delete next[idx];
+          return next;
+        });
+      } catch (err) {
+        setSlideRefineError(friendlyError(err, 'Slide image regeneration failed.'));
+      } finally {
+        setRefiningSlideIdx(null);
       }
-    } catch (err) {
-      setError(friendlyError(err, 'Activity detail generation failed.'));
-    } finally {
-      setExpandingActivity(null);
+    },
+    [
+      openaiApiKey,
+      refiningSlideIdx,
+      slidesData,
+      editedSlidePrompts,
+      updateSlide,
+      selectedChapterNum,
+    ],
+  );
+
+  // ── Slide deck render + download ────────────────────────────────────
+  // Renders any unrendered slide images through gpt-image-2 (with bounded
+  // concurrency) and packs the lot into a .pptx. Tracks progress through
+  // uiStore.slidesRender so a tab switch keeps the in-flight render visible.
+  const downloadSlideDeck = useCallback(async () => {
+    if (slidesRender) return; // already in flight
+    if (!openaiApiKey) {
+      setError('Add an OpenAI API key in Setup to render the slide images.');
+      return;
     }
-  }, [activities, syllabusChapter, claudeApiKey, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes, expandingActivity, setError]);
+    if (!syllabus || !syllabusChapter) return;
 
-  const generateAudio = useCallback(async () => {
-    if (!currentChapter || !syllabus) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingAudio(capturedChapter);
-    clearTabError('audio');
-    setAudioPhase('transcript');
-    setAudioError('');
-
+    setSlidesRender({
+      chapterNum: selectedChapterNum,
+      current: 0,
+      total: slidesData.length,
+      phase: 'rendering',
+    });
     try {
-      const transcript = await streamWithRetry(
+      const { generatePptx } = await import('../services/export/pptxExporter');
+      const { blob } = await generatePptx(
+        slidesData,
+        syllabus.courseTitle,
+        syllabusChapter.title,
+        setup.themeId,
+        openaiApiKey,
         {
-          apiKey: claudeApiKey,
-          system: buildAudioTranscriptPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildAudioTranscriptUserPrompt(currentChapter.title, currentChapter.htmlContent),
-          }],
-          thinkingBudget: 'medium',
-          maxTokens: 8000,
+          imageQuality: 'high',
+          imageSize: '3840x2160',
+          onProgress: (current, total, phase) =>
+            setSlidesRender({
+              chapterNum: selectedChapterNum,
+              current,
+              total,
+              phase,
+            }),
+          onSlideRendered: (i, dataUri) => {
+            // Atomic write to courseStore — safe even with parallel workers.
+            setSlideImage(selectedChapterNum, i, dataUri);
+            // Mirror to local state so the "rendered" chip updates live.
+            setSlidesData((prev) =>
+              prev.map((s, idx) => (idx === i ? { ...s, imageDataUri: dataUri } : s)),
+            );
+          },
+          preRendered: Object.fromEntries(
+            slidesData
+              .map((s, i) =>
+                s.imageDataUri ? ([i, s.imageDataUri] as [number, string]) : null,
+              )
+              .filter((x): x is [number, string] => x !== null),
+          ),
         },
-        {}
       );
-
-      if (selectedChapterRef.current === capturedChapter) setAudioTranscript(transcript);
-      updateChapter(capturedChapter, { audioTranscript: transcript });
-
-      if (geminiApiKey) {
-        setAudioPhase('synthesizing');
-        setAudioChunkProgress(null);
-        try {
-          const { generateAudiobook } = await import('../services/gemini/tts');
-          const voice = getVoiceOption(setup.voiceId);
-          const blob = await generateAudiobook(transcript, geminiApiKey, {
-            voiceName: voice.id,
-            accent: voice.accent,
-            onProgress: (current, total) => setAudioChunkProgress({ current, total }),
-          });
-          const url = URL.createObjectURL(blob);
-          if (selectedChapterRef.current === capturedChapter) setAudioUrl(url);
-          updateChapter(capturedChapter, { audioUrl: url });
-        } catch (err) {
-          const msg = friendlyError(err, 'Audio synthesis failed.');
-          console.error('Gemini TTS failed:', err);
-          if (selectedChapterRef.current === capturedChapter) setAudioError(msg);
-        }
-      }
+      downloadFile(
+        blob,
+        `slides-${selectedChapterNum}-${slugify(syllabusChapter.title || 'chapter')}.pptx`,
+      );
     } catch (err) {
-      setTabError('audio', friendlyError(err, 'Audio transcript generation failed.'));
+      setError(friendlyError(err, 'Slides export failed.'));
     } finally {
-      setGeneratingAudio(null);
-      setAudioPhase(null);
-      setAudioChunkProgress(null);
+      setSlidesRender(null);
     }
-  }, [currentChapter, syllabus, selectedChapterNum, claudeApiKey, geminiApiKey, updateChapter, setTabError, clearTabError]);
+  }, [
+    slidesRender,
+    openaiApiKey,
+    syllabus,
+    syllabusChapter,
+    selectedChapterNum,
+    slidesData,
+    setup.themeId,
+    setSlidesRender,
+    setSlideImage,
+    setError,
+  ]);
 
-  const retryAudio = useCallback(async () => {
-    if (!audioTranscript || !geminiApiKey) return;
-    setGeneratingAudio(selectedChapterNum);
-    setAudioPhase('synthesizing');
-    setAudioError('');
-    setAudioChunkProgress(null);
-
-    try {
-      const { generateAudiobook } = await import('../services/gemini/tts');
-      const voice = getVoiceOption(setup.voiceId);
-      const blob = await generateAudiobook(audioTranscript, geminiApiKey, {
-        voiceName: voice.id,
-        accent: voice.accent,
-        onProgress: (current, total) => setAudioChunkProgress({ current, total }),
+  // ── Per-image chapter refine: iframe shim + message listener ─────────
+  //
+  // The chapter iframe srcdoc gets a tiny click-handler shim appended so that
+  // clicks on rendered images bubble out to the parent as postMessages. The
+  // parent (this page) opens an ImageRefineDrawer with the original prompt.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const data = e?.data as { __cbImageClick?: number; idx?: number; prompt?: string; aspect?: string } | undefined;
+      if (!data || data.__cbImageClick !== 1) return;
+      if (typeof data.idx !== 'number') return;
+      const src = getChapterImageSrc(chapterHtml, data.idx);
+      if (!src) return;
+      setChapterImageRefine({
+        idx: data.idx,
+        prompt: data.prompt ?? '',
+        aspect: data.aspect ?? 'landscape',
+        src,
       });
-      const url = URL.createObjectURL(blob);
-      setAudioUrl(url);
-      updateChapter(selectedChapterNum, { audioUrl: url });
-    } catch (err) {
-      const msg = friendlyError(err, 'Audio synthesis failed.');
-      console.error('Gemini TTS retry failed:', err);
-      setAudioError(msg);
-    } finally {
-      setGeneratingAudio(null);
-      setAudioPhase(null);
-      setAudioChunkProgress(null);
+      setChapterImageDraft(data.prompt ?? '');
+      setChapterImageRefineError(null);
     }
-  }, [audioTranscript, geminiApiKey, selectedChapterNum, updateChapter]);
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [chapterHtml]);
 
-  const generateSlides = useCallback(async () => {
-    if (!currentChapter || !syllabus || !syllabusChapter) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingSlides(capturedChapter);
-    clearTabError('slides');
+  const closeChapterImageRefine = useCallback(() => {
+    // Closing during a render is fine — the async swap-in keeps running
+    // and the new image lands in the iframe when complete. We just hide
+    // the drawer so the user can interact with the rest of the page.
+    setChapterImageRefine(null);
+    setChapterImageRefineError(null);
+  }, []);
 
+  const refineChapterImage = useCallback(async () => {
+    if (!chapterImageRefine || !openaiApiKey || chapterImageRefining) return;
+    const newPrompt = chapterImageDraft.trim();
+    if (!newPrompt) {
+      setChapterImageRefineError('Image prompt is empty.');
+      return;
+    }
+    setChapterImageRefining(true);
+    setChapterImageRefineError(null);
     try {
-      const fullText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          system: buildSlidesPrompt(),
-          messages: [{
-            role: 'user',
-            content: buildSlidesUserPrompt(syllabusChapter.title, syllabusChapter.keyConcepts, currentChapter.htmlContent),
-          }],
-          thinkingBudget: 'medium',
-          maxTokens: 4000,
-        },
-        {}
+      const [{ generateImageWithRetry }, { withSafetyClause }] = await Promise.all([
+        import('../services/openai/imageGen'),
+        import('../services/openai/safetyClause'),
+      ]);
+      const size =
+        CHAPTER_ASPECT_TO_SIZE[chapterImageRefine.aspect] ?? CHAPTER_ASPECT_TO_SIZE.landscape;
+      const newDataUri = await generateImageWithRetry(
+        withSafetyClause(newPrompt),
+        openaiApiKey,
+        { size, quality: 'high' },
       );
-
-      try {
-        const parsed = parseJson(fullText) as SlideData[];
-        if (selectedChapterRef.current === capturedChapter) setSlidesData(parsed);
-        updateChapter(capturedChapter, { slidesJson: parsed });
-      } catch {
-        setTabError('slides', 'Failed to parse slide data from response');
+      const updatedHtml = swapChapterImage(
+        chapterHtml,
+        chapterImageRefine.idx,
+        newPrompt,
+        newDataUri,
+      );
+      setChapterHtml(updatedHtml);
+      if (currentChapter) {
+        updateChapter(selectedChapterNum, { htmlContent: updatedHtml });
       }
+      setChapterImageRefine(null);
     } catch (err) {
-      setTabError('slides', friendlyError(err, 'Slides generation failed.'));
+      setChapterImageRefineError(friendlyError(err, 'Chapter image regeneration failed.'));
     } finally {
-      setGeneratingSlides(null);
+      setChapterImageRefining(false);
     }
-  }, [currentChapter, syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, updateChapter, setTabError, clearTabError]);
-
-  const generateInfographic = useCallback(async () => {
-    if (!currentChapter || !syllabusChapter || !geminiApiKey) return;
-    const capturedChapter = selectedChapterNum;
-    setGeneratingInfographic(capturedChapter);
-    setInfographicDataUri('');
-    clearTabError('infographic');
-
-    try {
-      const { buildInfographicMetaPrompt, buildInfographicMetaUserPrompt } = await import('../prompts/infographic');
-      const promptText = await streamWithRetry(
-        {
-          apiKey: claudeApiKey,
-          model: MODELS.opus,
-          system: buildInfographicMetaPrompt(setup.themeId),
-          messages: [{
-            role: 'user',
-            content: buildInfographicMetaUserPrompt(syllabusChapter.title, syllabusChapter.keyConcepts, currentChapter.htmlContent),
-          }],
-          thinkingBudget: 'medium',
-          maxTokens: 2000,
-        },
-        {}
-      );
-
-      updateChapter(capturedChapter, { infographicPrompt: promptText });
-
-      const { generateInfographic: genImg } = await import('../services/gemini/imageGen');
-      const dataUri = await genImg(promptText, geminiApiKey);
-
-      if (selectedChapterRef.current === capturedChapter) setInfographicDataUri(dataUri);
-      updateChapter(capturedChapter, { infographicDataUri: dataUri });
-    } catch (err) {
-      setTabError('infographic', friendlyError(err, 'Infographic generation failed.'));
-    } finally {
-      setGeneratingInfographic(null);
-    }
-  }, [currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, geminiApiKey, setup.themeId, updateChapter, setTabError, clearTabError]);
+  }, [
+    chapterImageRefine,
+    openaiApiKey,
+    chapterImageRefining,
+    chapterImageDraft,
+    chapterHtml,
+    currentChapter,
+    selectedChapterNum,
+    updateChapter,
+  ]);
 
   // Generate all outputs for the currently selected chapter.
   // Each generate* already sets tab errors internally; this outer catch only
@@ -964,473 +945,481 @@ export function BuildPage() {
     if (!quizHtml) tasks.push(generateQuiz().catch(logFailure('quiz')));
     if (inClassQuizData.length === 0) tasks.push(generateInClassQuiz().catch(logFailure('inclass-quiz')));
     if (discussions.length === 0) tasks.push(generateDiscussion().catch(logFailure('discussion')));
-    if (activities.length === 0) tasks.push(generateActivities().catch(logFailure('activities')));
-    if (slidesData.length === 0) tasks.push(generateSlides().catch(logFailure('slides')));
-    if (!audioTranscript) tasks.push(generateAudio().catch(logFailure('audio')));
-    if (geminiApiKey && !infographicDataUri) tasks.push(generateInfographic().catch(logFailure('infographic')));
+    // Advanced-only materials (hidden tabs) are not generated — and not paid
+    // for — unless "Everything" is on.
+    if (advancedMode) {
+      if (activities.length === 0) tasks.push(generateActivities().catch(logFailure('activities')));
+      if (slidesData.length === 0) tasks.push(generateSlides().catch(logFailure('slides')));
+      if (!audioTranscript) tasks.push(generateAudio().catch(logFailure('audio')));
+      if (!currentChapter.weeklyChallengeData) tasks.push(generateWeeklyChallengeContent().catch(logFailure('weekly-challenge')));
+    }
     await Promise.allSettled(tasks);
-  }, [currentChapter, syllabusChapter, syllabus, quizHtml, inClassQuizData, discussions, activities, slidesData, audioTranscript, infographicDataUri, geminiApiKey, generateQuiz, generateInClassQuiz, generateDiscussion, generateActivities, generateSlides, generateAudio, generateInfographic]);
+  }, [advancedMode, currentChapter, syllabusChapter, syllabus, quizHtml, inClassQuizData, discussions, activities, slidesData, audioTranscript, generateQuiz, generateInClassQuiz, generateDiscussion, generateActivities, generateSlides, generateAudio, generateWeeklyChallengeContent]);
 
-  // ─── Batch generation (from GeneratePage) ───
-  const generateAllClasses = useCallback(async () => {
+  // Keep the ref pointing at the latest generateAllOutputs so refineChapter
+  // can fire a post-refine regen *after* the new chapter content has been
+  // committed (closures captured at refine-call-time would otherwise point
+  // at the stale callback).
+  useEffect(() => {
+    generateAllOutputsRef.current = generateAllOutputs;
+  }, [generateAllOutputs]);
+
+  // ─── Batch generation ───
+  //
+  // One engine for both batch modes. Every material is guarded by "does it
+  // already exist?", so re-running after a partial failure — or pressing
+  // "Retry failed" on the end-of-run summary — fills only the holes and
+  // never regenerates work that already landed.
+  //
+  //   'classes'    → reading + practice quiz + in-class quiz (+ weekly challenge)
+  //   'everything' → the above plus discussion (+ activities, audio, slides)
+  //
+  // Weekly challenge, activities, audio and slides are advanced-only: in the
+  // Canvas-focused mode their tabs are hidden, so the batch must not
+  // generate (and bill for) them either.
+  const runBatch = useCallback(async (mode: 'everything' | 'classes') => {
     if (!syllabus) return;
     setBatchGenerating(true);
+    setBatchSummary(null);
+    resetBatchChapterMs();
     batchCancelRef.current = false;
+    // One controller for the whole run — Stop aborts the in-flight call
+    // immediately instead of waiting for the next loop checkpoint.
+    const controller = beginAbortable('batch');
+    const signal = controller.signal;
+    const failures: BatchFailure[] = [];
+    let chaptersCompleted = 0;
 
     try {
-    const chaptersToGenerate = syllabus.chapters.filter(
-      ch => !chapters.find(c => c.number === ch.number)
-        && researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
-    );
-
-    for (const ch of chaptersToGenerate) {
-      if (batchCancelRef.current) break;
-      setBatchCurrentChapter(ch.number);
-      setBatchPhase('thinking');
-
-      try {
-        const dossier = researchDossiers.find(d => d.chapterNumber === ch.number);
-        const researchSources = dossier?.sources.map(s => ({
-          title: s.title, authors: s.authors, year: s.year,
-          summary: s.summary, url: s.url, doi: s.doi,
-        }));
-
-        const hasGemini = !!geminiApiKey;
-        const fullText = await streamMessage(
-          {
-            apiKey: claudeApiKey,
-            model: MODELS.opus,
-            system: buildChapterPrompt(setup.themeId, hasGemini),
-            messages: [{
-              role: 'user',
-              content: buildChapterUserPrompt(
-                syllabus.courseTitle, ch, setup.chapterLength, researchSources, hasGemini,
-              ),
-            }],
-            thinkingBudget: 'high',
-            maxTokens: 16000,
-          },
-          {
-            onThinking: () => setBatchPhase('thinking'),
-            onText: () => setBatchPhase('writing'),
-            onError: (err) => setError(err.message),
-          }
-        );
-
-        let html = extractHtml(fullText);
-        if (hasGemini) {
-          setBatchPhase('writing');
-          html = await replaceGeminiPlaceholders(html, geminiApiKey);
+      // Queue = researched chapters that still have work to do in this mode.
+      const queue = syllabus.chapters.filter((ch) => {
+        if (!researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)) return false;
+        const ex = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+        if (!ex?.htmlContent || !ex.practiceQuizData || !(ex.inClassQuizData && ex.inClassQuizData.length > 0)) return true;
+        if (advancedMode && !ex.weeklyChallengeData) return true;
+        if (mode === 'everything') {
+          return !(ex.discussionData && ex.discussionData.length > 0)
+            || (advancedMode && (
+              !(ex.activityData && ex.activityData.length > 0)
+              || !ex.audioTranscript
+              || !(ex.slidesJson && ex.slidesJson.length > 0)
+            ));
         }
-        addChapter({ number: ch.number, title: ch.title, htmlContent: html });
+        return false;
+      });
+      setBatchProgress(0, queue.length);
 
-        // Generate practice quiz
-        setBatchPhase('thinking');
-        try {
-          const quizText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildPracticeQuizPrompt(),
-              messages: [{
-                role: 'user',
-                content: buildPracticeQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 8000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
-          const { balancePracticeQuiz } = await import('../services/quiz/answerBalancer');
-          const balancedQuiz = await balancePracticeQuiz(quizText, claudeApiKey);
-          updateChapter(ch.number, { practiceQuizData: balancedQuiz });
-        } catch {
-          // Quiz generation failed, continue
-        }
+      for (let qi = 0; qi < queue.length; qi++) {
+        const ch = queue[qi];
+        if (batchCancelRef.current || signal.aborted) break;
+        setBatchProgress(qi + 1, queue.length);
+        setBatchCurrentChapter(ch.number);
+        const chapterStart = Date.now();
 
-        // Generate in-class quiz
-        try {
-          const inClassText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildInClassQuizPrompt(),
-              messages: [{
-                role: 'user',
-                content: buildInClassQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 8000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
+        // Fresh read — chapter may already exist from a previous partial run
+        let existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+
+        // ─── Phase 1: Sequential Opus calls ───
+        // 1a. Chapter HTML
+        if (!existing?.htmlContent) {
+          setBatchMaterial('Reading');
+          setBatchPhase('thinking');
           try {
-            const parsed = parseJson(inClassText) as InClassQuizQuestion[];
-            const { balanceInClassQuiz } = await import('../services/quiz/answerBalancer');
-            const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
-            if (balanced) updateChapter(ch.number, { inClassQuizData: balanced });
-          } catch {
-            // Parse failed, continue
-          }
-        } catch {
-          // In-class quiz generation failed, continue
-        }
-
-        // Generate weekly challenge
-        try {
-          const priorChapters = (ch.spacingConnections || [])
-            .map(n => syllabus.chapters.find(sc => sc.number === n))
-            .filter((sc): sc is NonNullable<typeof sc> => !!sc)
-            .map(sc => ({ number: sc.number, title: sc.title, keyConcepts: sc.keyConcepts }));
-          const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
-          const challengeText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildWeeklyChallengePrompt(),
-              messages: [{
-                role: 'user',
-                content: buildWeeklyChallengeUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000), ch.number, priorChapters),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 10000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
-          try {
-            const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
-            updateChapter(ch.number, { weeklyChallengeData: parsed });
-          } catch {
-            // Parse failed, continue
-          }
-        } catch {
-          // Weekly challenge generation failed, continue
-        }
-      } catch (err) {
-        setError(`Class ${ch.number}: ${friendlyError(err, 'generation failed.')}`);
-      }
-    }
-
-    } finally {
-      setBatchCurrentChapter(null);
-      setBatchPhase(null);
-      setBatchGenerating(false);
-    }
-  }, [syllabus, chapters, claudeApiKey, geminiApiKey, researchDossiers, setup.chapterLength, setup.themeId, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase]);
-
-  // ─── Full batch generation (all materials for all chapters) ───
-  const generateEverything = useCallback(async () => {
-    if (!syllabus) return;
-    setBatchGenerating(true);
-    batchCancelRef.current = false;
-
-    try {
-    const chaptersWithResearch = syllabus.chapters.filter(
-      ch => researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
-    );
-
-    for (const ch of chaptersWithResearch) {
-      if (batchCancelRef.current) break;
-      setBatchCurrentChapter(ch.number);
-
-      // Fresh read — chapter may already exist from a previous partial run
-      let existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-
-      // ─── Phase 1: Sequential Opus calls ───
-      // 1a. Chapter HTML
-      if (!existing?.htmlContent) {
-        setBatchMaterial('Reading');
-        setBatchPhase('thinking');
-        try {
-          const dossier = researchDossiers.find(d => d.chapterNumber === ch.number);
-          const researchSources = dossier?.sources.map(s => ({
-            title: s.title, authors: s.authors, year: s.year,
-            summary: s.summary, url: s.url, doi: s.doi,
-          }));
-          const hasGemini = !!geminiApiKey;
-          const fullText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildChapterPrompt(setup.themeId, hasGemini),
-              messages: [{
-                role: 'user',
-                content: buildChapterUserPrompt(
-                  syllabus.courseTitle, ch, setup.chapterLength, researchSources, hasGemini,
-                ),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 16000,
-            },
-            {
-              onThinking: () => setBatchPhase('thinking'),
-              onText: () => setBatchPhase('writing'),
-              onError: (err) => setError(err.message),
+            const dossier = researchDossiers.find(d => d.chapterNumber === ch.number);
+            const researchSources = dossier?.sources.map(s => ({
+              title: s.title, authors: s.authors, year: s.year,
+              summary: s.summary, url: s.url, doi: s.doi,
+            }));
+            const hasImageGen = !!openaiApiKey;
+            const fullText = await streamMessage(
+              {
+                apiKey: claudeApiKey,
+                model: MODELS.opus,
+                system: buildChapterPrompt(setup.themeId, hasImageGen),
+                signal,
+                messages: [{
+                  role: 'user',
+                  content: buildChapterUserPrompt(
+                    syllabus.courseTitle, ch, setup.chapterLength,
+                    { educationLevel: setup.educationLevel, priorKnowledge: setup.priorKnowledge, learnerNotes: setup.learnerNotes },
+                    researchSources, hasImageGen, setup.chapterLengthBrief,
+                  ),
+                }],
+                thinkingBudget: 'high',
+                maxTokens: 16000,
+              },
+              {
+                onThinking: () => setBatchPhase('thinking'),
+                onText: () => setBatchPhase('writing'),
+              }
+            );
+            let html = extractHtml(fullText);
+            if (hasImageGen) {
+              setBatchPhase('writing');
+              html = await replaceAiPlaceholders(html, openaiApiKey);
             }
-          );
-          let html = extractHtml(fullText);
-          if (hasGemini) {
-            setBatchPhase('writing');
-            html = await replaceGeminiPlaceholders(html, geminiApiKey);
+            addChapter({ number: ch.number, title: ch.title, htmlContent: html });
+          } catch (err) {
+            if (isAbortError(err) || signal.aborted) break;
+            failures.push({ chapter: ch.number, material: 'Reading', message: friendlyError(err, 'Drafting failed.') });
+            continue; // everything else needs the reading
           }
-          addChapter({ number: ch.number, title: ch.title, htmlContent: html });
-        } catch (err) {
-          setError(`Class ${ch.number}: ${friendlyError(err, 'generation failed.')}`);
-          continue; // Skip entire chapter if reading fails
         }
-      }
 
-      // Re-read after possible addChapter
-      existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-      if (!existing?.htmlContent) continue;
-      const html = existing.htmlContent;
+        // Re-read after possible addChapter
+        existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+        if (!existing?.htmlContent) continue;
+        const html = existing.htmlContent;
 
-      // 1b. Practice Quiz
-      if (!existing.practiceQuizData) {
-        setBatchMaterial('Practice Quiz');
-        setBatchPhase('thinking');
-        try {
-          const quizText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildPracticeQuizPrompt(),
-              messages: [{
-                role: 'user',
-                content: buildPracticeQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 8000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
-          const { balancePracticeQuiz } = await import('../services/quiz/answerBalancer');
-          const balancedQuiz = await balancePracticeQuiz(quizText, claudeApiKey);
-          updateChapter(ch.number, { practiceQuizData: balancedQuiz });
-        } catch {
-          // Quiz failed, continue
-        }
-      }
-
-      // 1c. In-Class Quiz
-      existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-      if (!existing?.inClassQuizData || existing.inClassQuizData.length === 0) {
-        setBatchMaterial('In-Class Quiz');
-        setBatchPhase('thinking');
-        try {
-          const inClassText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildInClassQuizPrompt(),
-              messages: [{
-                role: 'user',
-                content: buildInClassQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 8000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
+        // 1b. Practice Quiz
+        if (!existing.practiceQuizData) {
+          setBatchMaterial('Practice Quiz');
+          setBatchPhase('thinking');
           try {
-            const parsed = parseJson(inClassText) as InClassQuizQuestion[];
-            const { balanceInClassQuiz } = await import('../services/quiz/answerBalancer');
-            const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
-            if (balanced) updateChapter(ch.number, { inClassQuizData: balanced });
-          } catch {
-            // Parse failed
-          }
-        } catch {
-          // In-class quiz failed, continue
-        }
-      }
-
-      // 1d. Weekly Challenge
-      existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-      if (!existing?.weeklyChallengeData) {
-        setBatchMaterial('Weekly Challenge');
-        setBatchPhase('thinking');
-        try {
-          const priorChapters = (ch.spacingConnections || [])
-            .map(n => syllabus.chapters.find(sc => sc.number === n))
-            .filter((sc): sc is NonNullable<typeof sc> => !!sc)
-            .map(sc => ({ number: sc.number, title: sc.title, keyConcepts: sc.keyConcepts }));
-
-          const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
-          const challengeText = await streamMessage(
-            {
-              apiKey: claudeApiKey,
-              model: MODELS.opus,
-              system: buildWeeklyChallengePrompt(),
-              messages: [{
-                role: 'user',
-                content: buildWeeklyChallengeUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000), ch.number, priorChapters),
-              }],
-              thinkingBudget: 'high',
-              maxTokens: 10000,
-            },
-            { onError: (err) => setError(err.message) }
-          );
-          try {
-            const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
-            updateChapter(ch.number, { weeklyChallengeData: parsed });
-          } catch {
-            // Parse failed
-          }
-        } catch {
-          // Weekly challenge generation failed, continue
-        }
-      }
-
-      // ─── Phase 2: Parallel Haiku/Gemini calls ───
-      setBatchMaterial('Extras');
-      setBatchPhase('writing');
-      existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
-
-      const parallelTasks: Promise<void>[] = [];
-
-      // Discussion
-      if (!existing?.discussionData || existing.discussionData.length === 0) {
-        parallelTasks.push((async () => {
-          try {
-            const fullText = await streamWithRetry(
+            const quizText = await streamMessage(
               {
                 apiKey: claudeApiKey,
-                system: buildDiscussionPrompt(),
+                model: MODELS.opus,
+                system: buildPracticeQuizPrompt(),
+                signal,
                 messages: [{
                   role: 'user',
-                  content: buildDiscussionUserPrompt(ch.title, ch.keyConcepts, setup.cohortSize, setup.teachingEnvironment),
+                  content: buildPracticeQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
                 }],
-                thinkingBudget: 'medium',
-                maxTokens: 4000,
-              },
-              {}
-            );
-            const parsed = parseJson(fullText) as DiscussionPrompt[];
-            updateChapter(ch.number, { discussionData: parsed });
-          } catch { /* continue */ }
-        })());
-      }
-
-      // Activities
-      if (!existing?.activityData || existing.activityData.length === 0) {
-        parallelTasks.push((async () => {
-          try {
-            const fullText = await streamWithRetry(
-              {
-                apiKey: claudeApiKey,
-                system: buildActivitiesPrompt(),
-                messages: [{
-                  role: 'user',
-                  content: buildActivitiesUserPrompt(ch.title, ch.keyConcepts, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes),
-                }],
-                thinkingBudget: 'medium',
-                maxTokens: 4000,
-              },
-              {}
-            );
-            const parsed = parseJson(fullText) as Activity[];
-            updateChapter(ch.number, { activityData: parsed });
-          } catch { /* continue */ }
-        })());
-      }
-
-      // Audio transcript (+TTS)
-      if (!existing?.audioTranscript) {
-        parallelTasks.push((async () => {
-          try {
-            const transcript = await streamWithRetry(
-              {
-                apiKey: claudeApiKey,
-                system: buildAudioTranscriptPrompt(),
-                messages: [{
-                  role: 'user',
-                  content: buildAudioTranscriptUserPrompt(ch.title, html),
-                }],
-                thinkingBudget: 'medium',
+                thinkingBudget: 'high',
                 maxTokens: 8000,
               },
               {}
             );
-            updateChapter(ch.number, { audioTranscript: transcript });
+            const { balancePracticeQuiz } = await import('../services/quiz/answerBalancer');
+            const balancedQuiz = await balancePracticeQuiz(quizText, claudeApiKey);
+            updateChapter(ch.number, { practiceQuizData: balancedQuiz });
+          } catch (err) {
+            if (isAbortError(err) || signal.aborted) break;
+            failures.push({ chapter: ch.number, material: 'Practice quiz', message: friendlyError(err, 'Generation failed.') });
+          }
+        }
 
-            if (geminiApiKey) {
-              try {
-                const { generateAudiobook } = await import('../services/gemini/tts');
-                const batchVoice = getVoiceOption(setup.voiceId);
-                const blob = await generateAudiobook(transcript, geminiApiKey, { voiceName: batchVoice.id, accent: batchVoice.accent });
-                const url = URL.createObjectURL(blob);
-                updateChapter(ch.number, { audioUrl: url });
-              } catch {
-                // TTS failed, transcript is still saved
-              }
-            }
-          } catch { /* continue */ }
-        })());
-      }
-
-      // Slides
-      if (!existing?.slidesJson || existing.slidesJson.length === 0) {
-        parallelTasks.push((async () => {
+        // 1c. In-Class Quiz
+        existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+        if (!existing?.inClassQuizData || existing.inClassQuizData.length === 0) {
+          setBatchMaterial('In-Class Quiz');
+          setBatchPhase('thinking');
           try {
-            const fullText = await streamWithRetry(
-              {
-                apiKey: claudeApiKey,
-                system: buildSlidesPrompt(),
-                messages: [{
-                  role: 'user',
-                  content: buildSlidesUserPrompt(ch.title, ch.keyConcepts, html),
-                }],
-                thinkingBudget: 'medium',
-                maxTokens: 4000,
-              },
-              {}
-            );
-            const parsed = parseJson(fullText) as SlideData[];
-            updateChapter(ch.number, { slidesJson: parsed });
-          } catch { /* continue */ }
-        })());
-      }
-
-      // Infographic (requires Gemini)
-      if (geminiApiKey && !existing?.infographicDataUri) {
-        parallelTasks.push((async () => {
-          try {
-            const { buildInfographicMetaPrompt, buildInfographicMetaUserPrompt } = await import('../prompts/infographic');
-            const promptText = await streamWithRetry(
+            const inClassText = await streamMessage(
               {
                 apiKey: claudeApiKey,
                 model: MODELS.opus,
-                system: buildInfographicMetaPrompt(setup.themeId),
+                system: buildInClassQuizPrompt(),
+                signal,
                 messages: [{
                   role: 'user',
-                  content: buildInfographicMetaUserPrompt(ch.title, ch.keyConcepts, html),
+                  content: buildInClassQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)),
                 }],
-                thinkingBudget: 'medium',
-                maxTokens: 2000,
+                thinkingBudget: 'high',
+                maxTokens: 8000,
               },
               {}
             );
-            updateChapter(ch.number, { infographicPrompt: promptText });
-            const { generateInfographic: genImg } = await import('../services/gemini/imageGen');
-            const dataUri = await genImg(promptText, geminiApiKey);
-            updateChapter(ch.number, { infographicDataUri: dataUri });
-          } catch { /* continue */ }
-        })());
-      }
+            try {
+              const parsed = parseJson(inClassText) as InClassQuizQuestion[];
+              const { balanceInClassQuiz } = await import('../services/quiz/answerBalancer');
+              const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
+              if (balanced) updateChapter(ch.number, { inClassQuizData: balanced });
+            } catch {
+              failures.push({ chapter: ch.number, material: 'In-class quiz', message: 'The model returned unparseable quiz data — a retry usually fixes this.' });
+            }
+          } catch (err) {
+            if (isAbortError(err) || signal.aborted) break;
+            failures.push({ chapter: ch.number, material: 'In-class quiz', message: friendlyError(err, 'Generation failed.') });
+          }
+        }
 
-      if (parallelTasks.length > 0) {
-        await Promise.allSettled(parallelTasks);
-      }
-    }
+        // 1d. Weekly Challenge
+        existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+        if (advancedMode && !existing?.weeklyChallengeData) {
+          setBatchMaterial('Weekly Challenge');
+          setBatchPhase('thinking');
+          try {
+            const priorChapters = (ch.spacingConnections || [])
+              .map(n => syllabus.chapters.find(sc => sc.number === n))
+              .filter((sc): sc is NonNullable<typeof sc> => !!sc)
+              .map(sc => ({ number: sc.number, title: sc.title, keyConcepts: sc.keyConcepts }));
 
+            const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
+            const challengeText = await streamMessage(
+              {
+                apiKey: claudeApiKey,
+                model: MODELS.opus,
+                system: buildWeeklyChallengePrompt(),
+                signal,
+                messages: [{
+                  role: 'user',
+                  content: buildWeeklyChallengeUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000), ch.number, priorChapters),
+                }],
+                thinkingBudget: 'high',
+                maxTokens: 10000,
+              },
+              {}
+            );
+            try {
+              const parsed = parseJson(challengeText, '{') as WeeklyChallengeData;
+              updateChapter(ch.number, { weeklyChallengeData: parsed });
+            } catch {
+              failures.push({ chapter: ch.number, material: 'Weekly challenge', message: 'The model returned unparseable challenge data — a retry usually fixes this.' });
+            }
+          } catch (err) {
+            if (isAbortError(err) || signal.aborted) break;
+            failures.push({ chapter: ch.number, material: 'Weekly challenge', message: friendlyError(err, 'Generation failed.') });
+          }
+        }
+
+        // ─── Phase 2: Parallel extras — 'everything' mode only ───
+        if (mode === 'everything') {
+          setBatchMaterial('Extras');
+          setBatchPhase('writing');
+          existing = useCourseStore.getState().chapters.find(c => c.number === ch.number);
+
+          const parallelTasks: Promise<void>[] = [];
+
+          // Discussion
+          if (!existing?.discussionData || existing.discussionData.length === 0) {
+            parallelTasks.push((async () => {
+              try {
+                const fullText = await streamWithRetry(
+                  {
+                    apiKey: claudeApiKey,
+                    system: buildDiscussionPrompt(),
+                    signal,
+                    messages: [{
+                      role: 'user',
+                      content: buildDiscussionUserPrompt(ch.title, ch.keyConcepts, setup.cohortSize, setup.teachingEnvironment),
+                    }],
+                    thinkingBudget: 'medium',
+                    maxTokens: 4000,
+                  },
+                  {}
+                );
+                const parsed = parseJson(fullText) as DiscussionPrompt[];
+                updateChapter(ch.number, { discussionData: parsed });
+              } catch (err) {
+                if (!isAbortError(err)) failures.push({ chapter: ch.number, material: 'Discussion', message: friendlyError(err, 'Generation failed.') });
+              }
+            })());
+          }
+
+          // Activities (advanced only)
+          if (advancedMode && (!existing?.activityData || existing.activityData.length === 0)) {
+            parallelTasks.push((async () => {
+              try {
+                const fullText = await streamWithRetry(
+                  {
+                    apiKey: claudeApiKey,
+                    system: buildActivitiesPrompt(),
+                    signal,
+                    messages: [{
+                      role: 'user',
+                      content: buildActivitiesUserPrompt(ch.title, ch.keyConcepts, setup.cohortSize, setup.teachingEnvironment, setup.environmentNotes),
+                    }],
+                    thinkingBudget: 'medium',
+                    maxTokens: 4000,
+                  },
+                  {}
+                );
+                const parsed = parseJson(fullText) as Activity[];
+                updateChapter(ch.number, { activityData: parsed });
+              } catch (err) {
+                if (!isAbortError(err)) failures.push({ chapter: ch.number, material: 'Activities', message: friendlyError(err, 'Generation failed.') });
+              }
+            })());
+          }
+
+          // Audio transcript (+TTS) (advanced only)
+          if (advancedMode && !existing?.audioTranscript) {
+            parallelTasks.push((async () => {
+              try {
+                const transcript = await streamWithRetry(
+                  {
+                    apiKey: claudeApiKey,
+                    system: buildAudioTranscriptPrompt(),
+                    signal,
+                    messages: [{
+                      role: 'user',
+                      content: buildAudioTranscriptUserPrompt(ch.title, html),
+                    }],
+                    thinkingBudget: 'medium',
+                    maxTokens: 8000,
+                  },
+                  {}
+                );
+                updateChapter(ch.number, { audioTranscript: transcript });
+
+                if (elevenLabsApiKey) {
+                  try {
+                    const { generateAudiobook } = await import('../services/elevenLabs/tts');
+                    const batchVoice = getVoiceOption(setup.voiceId);
+                    const blob = await generateAudiobook(transcript, elevenLabsApiKey, { voiceId: batchVoice.id, signal });
+                    const url = URL.createObjectURL(blob);
+                    const audioDataUri = await persistableAudioDataUri(blob);
+                    updateChapter(ch.number, { audioUrl: url, audioDataUri });
+                  } catch (err) {
+                    // The transcript is saved either way.
+                    if (!isAbortError(err)) failures.push({ chapter: ch.number, material: 'Audio narration', message: friendlyError(err, 'Synthesis failed — the transcript is saved.') });
+                  }
+                }
+              } catch (err) {
+                if (!isAbortError(err)) failures.push({ chapter: ch.number, material: 'Audio transcript', message: friendlyError(err, 'Generation failed.') });
+              }
+            })());
+          }
+
+          // Slides (advanced only)
+          if (advancedMode && (!existing?.slidesJson || existing.slidesJson.length === 0)) {
+            parallelTasks.push((async () => {
+              try {
+                const fullText = await streamWithRetry(
+                  {
+                    apiKey: claudeApiKey,
+                    system: buildSlidesPrompt(setup.themeId),
+                    signal,
+                    messages: [{
+                      role: 'user',
+                      content: buildSlidesUserPrompt(ch.title, ch.keyConcepts, html),
+                    }],
+                    thinkingBudget: 'medium',
+                    maxTokens: 4000,
+                  },
+                  {}
+                );
+                const parsed = parseJson(fullText) as SlideData[];
+                updateChapter(ch.number, { slidesJson: parsed });
+              } catch (err) {
+                if (!isAbortError(err)) failures.push({ chapter: ch.number, material: 'Slides', message: friendlyError(err, 'Generation failed.') });
+              }
+            })());
+          }
+
+          if (parallelTasks.length > 0) {
+            await Promise.allSettled(parallelTasks);
+          }
+        }
+
+        if (!batchCancelRef.current && !signal.aborted) {
+          pushBatchChapterMs(Date.now() - chapterStart);
+          chaptersCompleted++;
+        }
+      }
     } finally {
+      endAbortable('batch', controller);
+      setBatchSummary({
+        mode,
+        chaptersCompleted,
+        failures,
+        cancelled: batchCancelRef.current || signal.aborted,
+      });
+      setBatchProgress(null, null);
       setBatchCurrentChapter(null);
       setBatchPhase(null);
       setBatchMaterial(null);
       setBatchGenerating(false);
     }
-  }, [syllabus, claudeApiKey, geminiApiKey, researchDossiers, setup, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+  }, [advancedMode, syllabus, claudeApiKey, openaiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, setBatchSummary]);
+
+  const generateAllClasses = useCallback(() => runBatch('classes'), [runBatch]);
+  const generateEverything = useCallback(() => runBatch('everything'), [runBatch]);
+
+  // ─── Canvas module generation (template mode) ───
+  const generateTemplateContent = useCallback(async () => {
+    if (!syllabus || !syllabusChapter) return;
+    const capturedChapter = selectedChapterNum;
+    setGeneratingTemplateContent(capturedChapter);
+    clearTabError('template-module');
+    const abortKey = materialAbortKey('template-module', capturedChapter);
+    const controller = beginAbortable(abortKey);
+
+    try {
+      const { generateTemplateChapter } = await import('../services/template/generateChapter');
+      const { content } = await generateTemplateChapter({
+        apiKey: claudeApiKey,
+        setup,
+        chapter: syllabusChapter,
+        courseTitle: syllabus.courseTitle,
+        courseOverview: syllabus.courseOverview,
+        examplePatternContent,
+        signal: controller.signal,
+      });
+      // The chapter record may not exist yet in template mode.
+      if (!useCourseStore.getState().chapters.some((c) => c.number === capturedChapter)) {
+        addChapter({ number: capturedChapter, title: syllabusChapter.title, htmlContent: '' });
+      }
+      updateChapter(capturedChapter, { templateContent: content });
+    } catch (err) {
+      // A user-initiated Stop is a silent cancel, not a failure.
+      if (!isAbortError(err)) {
+        setTabError('template-module', friendlyError(err, 'Canvas module generation failed.'));
+      }
+    } finally {
+      endAbortable(abortKey, controller);
+      setGeneratingTemplateContent(null);
+    }
+  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, examplePatternContent, addChapter, updateChapter, setTabError, clearTabError]);
+
+  const generateAllCanvasModules = useCallback(async () => {
+    if (!syllabus) return;
+    setBatchGenerating(true);
+    setBatchMaterial('Canvas module');
+    batchCancelRef.current = false;
+    const controller = beginAbortable('batch');
+
+    try {
+      const pending = syllabus.chapters.filter((ch) => {
+        const generated = useCourseStore.getState().chapters.find((c) => c.number === ch.number);
+        return !generated?.templateContent;
+      });
+
+      const { generateTemplateChapter } = await import('../services/template/generateChapter');
+
+      for (const ch of pending) {
+        if (batchCancelRef.current || controller.signal.aborted) break;
+        setBatchCurrentChapter(ch.number);
+        setBatchPhase('thinking');
+        try {
+          const { content } = await generateTemplateChapter({
+            apiKey: claudeApiKey,
+            setup,
+            chapter: ch,
+            courseTitle: syllabus.courseTitle,
+            courseOverview: syllabus.courseOverview,
+            examplePatternContent,
+            signal: controller.signal,
+            onText: () => setBatchPhase('writing'),
+          });
+          // The chapter record may not exist yet in template mode — create it
+          // so templateContent has somewhere to live.
+          if (!useCourseStore.getState().chapters.some((c) => c.number === ch.number)) {
+            addChapter({ number: ch.number, title: ch.title, htmlContent: '' });
+          }
+          updateChapter(ch.number, { templateContent: content });
+        } catch (err) {
+          if (isAbortError(err)) break;
+          setError(
+            friendlyError(err, `Canvas module generation failed for Class ${ch.number}.`),
+          );
+          // Move on rather than aborting the batch — one bad chapter
+          // shouldn't block the rest.
+        }
+      }
+    } finally {
+      endAbortable('batch', controller);
+      batchCancelRef.current = false;
+      setBatchCurrentChapter(null);
+      setBatchPhase(null);
+      setBatchMaterial(null);
+      setBatchGenerating(false);
+    }
+  }, [syllabus, claudeApiKey, setup, examplePatternContent, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+
+  const templateContent = currentChapter?.templateContent;
 
   const handleProceed = () => {
     if (anyBusy) {
@@ -1443,10 +1432,26 @@ export function BuildPage() {
 
   if (!syllabus) {
     return (
-      <div className="text-center py-20">
-        <p className="text-text-secondary">No syllabus available. Please complete earlier stages.</p>
-        <Button variant="secondary" className="mt-4" onClick={() => navigate('/syllabus')}>
-          Back to Syllabus
+      <div
+        style={{
+          fontFamily: 'var(--font-cb-serif)',
+          padding: '64px 0',
+          textAlign: 'center',
+          color: 'var(--cb-text-default)',
+        }}
+      >
+        <p
+          className="cb-italic"
+          style={{
+            fontSize: 16,
+            color: 'var(--cb-text-muted)',
+            marginBottom: 18,
+          }}
+        >
+          No syllabus generated yet. Step back to the syllabus stage to start.
+        </p>
+        <Button variant="secondary" onClick={() => navigate('/syllabus')}>
+          ← Back to syllabus
         </Button>
       </div>
     );
@@ -1454,67 +1459,197 @@ export function BuildPage() {
 
   const totalChapters = syllabus.chapters.length;
   const generatedCount = chapters.length;
-  const overallProgress = totalChapters > 0 ? (generatedCount / totalChapters) * 100 : 0;
 
-  const templateContent = currentChapter?.templateContent;
   const tabs = [
     ...(setup.templateId
       ? [{ id: 'template-module', label: 'Canvas Module', ready: !!templateContent }]
       : []),
     { id: 'chapter', label: 'Reading', ready: !!chapterHtml },
-    { id: 'quiz', label: 'Practice Quiz', ready: !!quizHtml },
-    { id: 'inclassquiz', label: 'In-Class Quiz', ready: inClassQuizData.length > 0 },
+    { id: 'quiz', label: 'Practice', ready: !!quizHtml },
+    { id: 'inclassquiz', label: 'Quizzes', ready: inClassQuizData.length > 0 },
     { id: 'discussion', label: 'Discussion', ready: discussions.length > 0 },
     // Advanced-only artifacts. Hidden by default to keep the Canvas-focused
-    // surface tight; instructors who want multimedia can flip the toggle on
-    // the Setup page.
+    // surface tight; instructors who want multimedia flip the toggle in the
+    // API keys modal on the Setup page.
     ...(advancedMode
       ? [
-          { id: 'weeklychallenge', label: 'Weekly Challenge', ready: !!weeklyChallengeHtml },
+          { id: 'weeklychallenge', label: 'Challenge', ready: !!weeklyChallengeHtml },
           { id: 'activities', label: 'Activities', ready: activities.length > 0 },
-          { id: 'audio', label: 'Audiobook', ready: !!audioTranscript },
+          { id: 'audio', label: 'Audio', ready: !!audioTranscript },
           { id: 'slides', label: 'Slides', ready: slidesData.length > 0 },
         ]
       : []),
-    ...(advancedMode && geminiApiKey
-      ? [{ id: 'infographic', label: 'Infographic', ready: !!infographicDataUri }]
-      : []),
   ];
 
+  // Rolling ETA from completed chapters this run — only meaningful once at
+  // least one chapter has finished.
+  const batchEtaLabel = (() => {
+    if (!batchGenerating || !batchTotal || !batchIndex || batchChapterMs.length === 0) return '';
+    const avg = batchChapterMs.reduce((a, b) => a + b, 0) / batchChapterMs.length;
+    const mins = Math.max(1, Math.round((avg * (batchTotal - batchIndex + 1)) / 60000));
+    return `~${mins} min left`;
+  })();
+
+  // Per-tab retry targets for the tab-error banner. The reading tab routes
+  // errors through the global banner, so it has no entry here.
+  const tabRetryHandlers: Record<string, (() => void) | undefined> = {
+    quiz: () => void generateQuiz(),
+    inclassquiz: () => void generateInClassQuiz(),
+    weeklychallenge: () => void generateWeeklyChallengeContent(),
+    discussion: () => void generateDiscussion(),
+    activities: () => void generateActivities(),
+    audio: () => void generateAudio(),
+    slides: () => void generateSlides(),
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="max-w-[1400px] mx-auto py-4"
+    <div
+      style={{
+        fontFamily: 'var(--font-cb-serif)',
+        color: 'var(--cb-text-default)',
+        padding: '24px 0 32px',
+      }}
     >
-      {/* ─── Sticky header ─── */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold">Build</h1>
-          <div className="flex items-center gap-3">
-            <div className="w-32 h-1.5 bg-bg-elevated rounded-full overflow-hidden">
-              <motion.div
-                className="h-full bg-gradient-to-r from-violet-600 to-violet-400 rounded-full"
-                animate={{ width: `${overallProgress}%` }}
-                transition={{ duration: 0.5 }}
-              />
-            </div>
-            <span className="text-xs text-text-muted tabular-nums">{generatedCount}/{totalChapters} classes</span>
+      {/* ─── Codex slim banner ─── */}
+      <header
+        className="cb-page-head"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto',
+          gap: 24,
+          alignItems: 'flex-end',
+          paddingBottom: 14,
+          marginBottom: 18,
+          borderBottom: '0.5px solid var(--cb-border-rule)',
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            className="cb-sc"
+            style={{
+              fontSize: 13,
+              color: 'var(--cb-accent-emphasis)',
+              letterSpacing: '0.16em',
+            }}
+          >
+            Building the course
+          </div>
+          <h1
+            style={{
+              margin: '4px 0 6px',
+              fontSize: 26,
+              lineHeight: 1.25,
+              fontWeight: 500,
+              fontVariationSettings: '"opsz" 22',
+              letterSpacing: '-0.005em',
+              color: 'var(--cb-text-default)',
+            }}
+          >
+            {syllabus?.courseTitle || 'Build'}
+          </h1>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 10,
+              fontSize: 14.5,
+              lineHeight: 1.5,
+              color: 'var(--cb-text-muted)',
+            }}
+          >
+            {batchGenerating && (
+              <span
+                aria-hidden
+                style={{
+                  display: 'inline-block',
+                  width: 48,
+                  height: 1,
+                  background: 'var(--cb-border-default)',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  verticalAlign: 'middle',
+                }}
+              >
+                <span
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'var(--cb-accent-emphasis)',
+                    animation:
+                      'cb-pen 1.4s cubic-bezier(0.32,0.04,0.32,1) infinite',
+                  }}
+                />
+              </span>
+            )}
+            <span className="cb-italic">
+              {batchGenerating
+                ? [
+                    batchIndex && batchTotal ? `Class ${batchIndex} of ${batchTotal}` : '',
+                    batchMaterial
+                      ? `drafting ${batchMaterial.toLowerCase()} for chapter ${batchCurrentChapter}…`
+                      : `drafting chapter ${batchCurrentChapter}…`,
+                    batchEtaLabel,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : generatedCount === totalChapters && totalChapters > 0
+                ? `— ${totalChapters} ${totalChapters === 1 ? 'chapter' : 'chapters'} built.`
+                : `${generatedCount} of ${totalChapters} ${totalChapters === 1 ? 'chapter' : 'chapters'} built.`}
+            </span>
           </div>
         </div>
-        <div className="flex gap-2">
-          {!batchGenerating && generatedCount < totalChapters && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setShowBatchConfirm(true)}
-              disabled={anyBusy}
+
+        <div
+          className="cb-page-head-actions"
+          style={{
+            display: 'flex',
+            gap: 10,
+            flexShrink: 0,
+            alignItems: 'baseline',
+            flexWrap: 'wrap',
+          }}
+        >
+          {batchGenerating ? (
+            <button
+              type="button"
+              onClick={() => {
+                batchCancelRef.current = true;
+                abortInFlight('batch');
+              }}
+              className="cb-focus"
+              title="Stops now — the in-flight call is cancelled; finished materials are kept."
+              style={{
+                background: 'transparent',
+                border: 0,
+                padding: 0,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: 13,
+                fontStyle: 'italic',
+                color: 'var(--cb-status-warning)',
+                textDecoration: 'underline',
+                textDecorationThickness: '0.5px',
+                textUnderlineOffset: 3,
+              }}
             >
-              {generatedCount > 0 ? 'Generate Remaining Classes' : 'Generate All Classes'}
-            </Button>
+              Stop
+            </button>
+          ) : (
+            generatedCount < totalChapters && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setShowBatchConfirm(true)}
+                disabled={anyBusy}
+              >
+                {generatedCount > 0 ? 'Draft remaining chapters' : 'Draft all chapters'}
+              </Button>
+            )
           )}
-          {!batchGenerating && setup.templateId && chapters.length > 0 && (() => {
-            const missing = chapters.filter((c) => !c.templateContent).length;
+          {!batchGenerating && setup.templateId && (() => {
+            const missing = syllabus.chapters.filter(
+              (ch) => !chapters.find((c) => c.number === ch.number)?.templateContent,
+            ).length;
             if (missing === 0) return null;
             return (
               <Button
@@ -1523,56 +1658,38 @@ export function BuildPage() {
                 onClick={generateAllCanvasModules}
                 disabled={anyBusy}
               >
-                {missing === chapters.length
-                  ? 'Generate All Canvas Modules'
-                  : `Generate ${missing} Remaining Canvas ${missing === 1 ? 'Module' : 'Modules'}`}
+                {missing === syllabus.chapters.length
+                  ? 'Generate all Canvas modules'
+                  : `Generate ${missing} remaining Canvas ${missing === 1 ? 'module' : 'modules'}`}
               </Button>
             );
           })()}
-          {batchGenerating && (
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-2 text-xs text-violet-400">
-                <motion.div
-                  className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full"
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                />
-                {batchMaterial
-                  ? `Class ${batchCurrentChapter}: ${batchMaterial}`
-                  : 'Batch generating...'}
-              </span>
-              <button
-                onClick={() => { batchCancelRef.current = true; }}
-                className="text-xs text-amber-400 hover:text-amber-300 bg-transparent border-0 cursor-pointer underline"
-              >
-                Stop After Current
-              </button>
-            </div>
-          )}
           <Button
             size="sm"
-            variant="secondary"
             onClick={handleProceed}
             disabled={chapters.length === 0}
           >
-            Go to Export
-            <svg className="ml-1.5 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
+            Go to Export →
           </Button>
         </div>
-      </div>
+      </header>
 
       {/* Batch generation confirmation dialog */}
       <AnimatePresence>
         {showBatchConfirm && (() => {
-          const remaining = totalChapters - generatedCount;
-          const researched = syllabus.chapters.filter(
+          // Chapters with research that still need core materials — matches
+          // runBatch's own fill-the-holes queue, so the count is honest.
+          const researched = syllabus.chapters.filter((ch) => {
+            if (!researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)) return false;
+            const ex = chapters.find(c => c.number === ch.number);
+            return !ex?.htmlContent || !ex.practiceQuizData
+              || !(ex.inClassQuizData && ex.inClassQuizData.length > 0)
+              || (advancedMode && !ex.weeklyChallengeData);
+          }).length;
+          const unresearched = syllabus.chapters.filter(
             ch => !chapters.find(c => c.number === ch.number)
-              && researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
+              && !researchDossiers.some(d => d.chapterNumber === ch.number && d.sources.length > 0)
           ).length;
-          const unresearched = remaining - researched;
           return (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
@@ -1583,15 +1700,15 @@ export function BuildPage() {
               aria-modal="true"
               aria-labelledby="batch-confirm-title"
             >
-              <div className="p-5 rounded-xl bg-amber-500/5 border border-amber-500/20">
-                <h3 id="batch-confirm-title" className="text-sm font-semibold text-amber-400 mb-2">
+              <div className="p-5 rounded-xl bg-cb-status-warning-bg border border-cb-status-warning">
+                <h3 id="batch-confirm-title" className="text-sm font-semibold text-cb-status-warning mb-2">
                   Generate {researched} class{researched !== 1 ? 'es' : ''} at once?
                 </h3>
-                <p className="text-sm text-text-secondary mb-3 leading-relaxed">
+                <p className="text-sm text-cb-text-default mb-3 leading-relaxed">
                   This will use a meaningful amount of your API key balance.
                 </p>
                 {unresearched > 0 && (
-                  <p className="text-xs text-amber-400/80 mb-3 leading-relaxed">
+                  <p className="text-xs text-cb-status-warning mb-3 leading-relaxed">
                     {unresearched} class{unresearched !== 1 ? 'es' : ''} without research will be skipped. Go to Research to add them.
                   </p>
                 )}
@@ -1599,21 +1716,25 @@ export function BuildPage() {
                   <button
                     onClick={() => { setShowBatchConfirm(false); generateEverything(); }}
                     disabled={researched === 0}
-                    className="p-3 rounded-lg border border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-default cursor-pointer"
+                    className="p-3 rounded-lg border border-cb-border-strong bg-cb-accent-emphasis-quiet hover:bg-cb-accent-emphasis-quiet transition-colors text-left disabled:opacity-40 disabled:cursor-default cursor-pointer"
                   >
-                    <div className="text-sm font-semibold text-violet-300 mb-1">Build Everything</div>
-                    <p className="text-xs text-text-muted leading-relaxed">
-                      All materials — reading, quizzes, weekly challenge, discussion, activities, audiobook, slides{geminiApiKey ? ', infographic' : ''}.
+                    <div className="text-sm font-semibold text-cb-accent-emphasis mb-1">
+                      {advancedMode ? 'Build Everything' : 'Build All Canvas Materials'}
+                    </div>
+                    <p className="text-xs text-cb-text-muted leading-relaxed">
+                      {advancedMode
+                        ? 'All materials — reading, quizzes, weekly challenge, discussion, activities, audiobook, slides.'
+                        : 'Reading, quizzes, and discussion. Turn on "Everything" in the API keys modal on Setup to also draft challenge, activities, audio and slides.'}
                       {researched >= 6 ? ' Possibly 1-2 hours.' : researched >= 3 ? ' Possibly 30-60 min.' : ' Takes a while.'}
                     </p>
                   </button>
                   <button
                     onClick={() => { setShowBatchConfirm(false); generateAllClasses(); }}
                     disabled={researched === 0}
-                    className="p-3 rounded-lg border border-violet-500/10 bg-bg-elevated hover:bg-bg-card transition-colors text-left disabled:opacity-40 disabled:cursor-default cursor-pointer"
+                    className="p-3 rounded-lg border border-cb-border-default bg-cb-surface-sunken hover:bg-cb-ground-page transition-colors text-left disabled:opacity-40 disabled:cursor-default cursor-pointer"
                   >
-                    <div className="text-sm font-semibold text-text-secondary mb-1">Classes + Quizzes Only</div>
-                    <p className="text-xs text-text-muted leading-relaxed">
+                    <div className="text-sm font-semibold text-cb-text-default mb-1">Classes + Quizzes Only</div>
+                    <p className="text-xs text-cb-text-muted leading-relaxed">
                       Reading, Practice Quiz, and In-Class Quiz for each class.
                       {researched >= 6 ? ' Possibly 30+ min.' : researched >= 3 ? ' Possibly 10-15 min.' : ''}
                     </p>
@@ -1630,12 +1751,115 @@ export function BuildPage() {
         })()}
       </AnimatePresence>
 
-      {error && (
-        <div className="mb-4 p-4 rounded-lg bg-error/10 border border-error/20 text-error text-sm">{error}</div>
+      {/* End-of-batch report — what landed, what failed, one-click retry. */}
+      {batchSummary && !batchGenerating && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 20,
+            padding: '14px 16px',
+            background: batchSummary.failures.length
+              ? 'var(--cb-status-warning-bg)'
+              : 'var(--cb-surface-sunken)',
+            borderLeft: `2px solid ${
+              batchSummary.failures.length
+                ? 'var(--cb-status-warning)'
+                : 'var(--cb-status-success)'
+            }`,
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: 'var(--cb-text-default)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              gap: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>
+              <strong>{batchSummary.cancelled ? 'Batch stopped.' : 'Batch finished.'}</strong>{' '}
+              {batchSummary.chaptersCompleted}{' '}
+              {batchSummary.chaptersCompleted === 1 ? 'chapter' : 'chapters'} processed
+              {batchSummary.failures.length > 0
+                ? ` · ${batchSummary.failures.length} ${
+                    batchSummary.failures.length === 1 ? 'material' : 'materials'
+                  } failed:`
+                : ' — every material drafted.'}
+            </span>
+            <span style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              {batchSummary.failures.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    const mode = batchSummary.mode;
+                    setBatchSummary(null);
+                    void runBatch(mode);
+                  }}
+                >
+                  Retry failed ({batchSummary.failures.length})
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => setBatchSummary(null)}>
+                Dismiss
+              </Button>
+            </span>
+          </div>
+          {batchSummary.failures.length > 0 && (
+            <ul
+              style={{
+                margin: '10px 0 0',
+                paddingLeft: 18,
+                fontSize: 13,
+                lineHeight: 1.7,
+                color: 'var(--cb-text-muted)',
+              }}
+            >
+              {batchSummary.failures.slice(0, 8).map((f, i) => (
+                <li key={i}>
+                  Chapter {f.chapter} · {f.material} — {f.message}
+                </li>
+              ))}
+              {batchSummary.failures.length > 8 && (
+                <li>…and {batchSummary.failures.length - 8} more</li>
+              )}
+            </ul>
+          )}
+        </div>
       )}
 
-      {/* ─── Two-panel layout ─── */}
-      <div className="flex gap-0" style={{ height: 'calc(100vh - 180px)' }}>
+      {error && (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: '12px 14px',
+            background: 'var(--cb-status-danger-bg)',
+            borderLeft: '2px solid var(--cb-status-danger)',
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: 'var(--cb-text-default)',
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {/* ─── Codex two-panel layout — sidebar + content ─── */}
+      <div
+        className="cb-build-layout"
+        style={{
+          display: 'flex',
+          gap: 0,
+          height: 'calc(100vh - 220px)',
+          border: '1px solid var(--cb-border-default)',
+          borderRadius: 2,
+          overflow: 'hidden',
+        }}
+      >
         {/* Left: Chapter Sidebar */}
         <ChapterSidebar
           selectedChapterNum={selectedChapterNum}
@@ -1645,25 +1869,33 @@ export function BuildPage() {
         />
 
         {/* Right: Content area */}
-        <div className="flex-1 overflow-y-auto pl-4">
+        <div
+          className="cb-build-content"
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '22px 28px',
+            background: 'var(--cb-ground-page)',
+          }}
+        >
           {/* Batch progress panel — shown during batch mode */}
           {batchGenerating && (
-            <div className="mb-4 bg-bg-card border border-violet-500/10 rounded-xl p-5">
+            <div className="mb-4 bg-cb-ground-page border border-cb-border-default rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-violet-400">Batch Generation</h3>
-                <span className="text-xs text-text-muted">
+                <h3 className="text-sm font-semibold text-cb-accent-emphasis">Batch Generation</h3>
+                <span className="text-xs text-cb-text-muted">
                   {generatedCount} of {totalChapters} complete
                 </span>
               </div>
               <div className="relative">
-                <div className="absolute left-5 top-0 bottom-0 w-px bg-gradient-to-b from-violet-500/30 via-violet-500/10 to-transparent" />
+                <div className="absolute left-5 top-0 bottom-0 w-px bg-cb-border-default" />
                 <div className="space-y-1">
                   {syllabus.chapters.map((ch) => {
                     const generated = chapters.find(c => c.number === ch.number);
                     const isCurrent = batchCurrentChapter === ch.number;
                     // Count completed materials for this chapter
                     let matCount = 0;
-                    const maxMat = geminiApiKey ? 8 : 7;
+                    const maxMat = 7;
                     if (generated) {
                       if (generated.htmlContent) matCount++;
                       if (generated.practiceQuizData) matCount++;
@@ -1672,25 +1904,24 @@ export function BuildPage() {
                       if (generated.activityData && generated.activityData.length > 0) matCount++;
                       if (generated.audioTranscript) matCount++;
                       if (generated.slidesJson && generated.slidesJson.length > 0) matCount++;
-                      if (geminiApiKey && generated.infographicDataUri) matCount++;
                     }
                     return (
                       <div key={ch.number} className="relative flex items-center gap-4 pl-0">
                         <div className="relative z-10 shrink-0">
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all duration-300 ${
                             generated && matCount === maxMat
-                              ? 'bg-success/10 border-success/30 text-success'
+                              ? 'bg-cb-status-success border-cb-status-success text-cb-status-success'
                               : generated
-                              ? 'bg-violet-500/10 border-violet-500/30 text-violet-400'
+                              ? 'bg-cb-accent-emphasis-quiet border-cb-border-strong text-cb-accent-emphasis'
                               : isCurrent
-                              ? 'bg-violet-500/20 border-violet-500/50 text-violet-400'
-                              : 'bg-bg-card border-violet-500/10 text-text-muted'
+                              ? 'bg-cb-accent-emphasis-quiet border-cb-border-strong text-cb-accent-emphasis'
+                              : 'bg-cb-ground-page border-cb-border-default text-cb-text-muted'
                           }`}>
                             {generated && matCount === maxMat ? (
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
                             ) : isCurrent ? (
                               <motion.div
-                                className="w-3 h-3 rounded-full bg-violet-500"
+                                className="w-3 h-3 rounded-full bg-cb-accent-emphasis"
                                 animate={{ scale: [1, 1.3, 1] }}
                                 transition={{ duration: 1, repeat: Infinity }}
                               />
@@ -1700,10 +1931,10 @@ export function BuildPage() {
                           </div>
                         </div>
                         <div className={`flex-1 py-2 px-3 rounded-xl transition-all ${
-                          isCurrent ? 'bg-violet-500/5 border border-violet-500/20' : generated ? 'bg-bg-card/50' : ''
+                          isCurrent ? 'bg-cb-accent-emphasis-quiet border border-cb-border-default' : generated ? 'bg-cb-ground-page/50' : ''
                         }`}>
                           <div className="text-sm font-medium truncate">{ch.title}</div>
-                          <div className="text-xs text-text-muted mt-0.5">
+                          <div className="text-xs text-cb-text-muted mt-0.5">
                             {generated
                               ? `${matCount}/${maxMat} materials`
                               : isCurrent
@@ -1715,7 +1946,7 @@ export function BuildPage() {
                         </div>
                         {isCurrent && (
                           <motion.div
-                            className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full shrink-0"
+                            className="w-5 h-5 border-2 border-cb-accent-emphasis border-t-transparent rounded-full shrink-0"
                             animate={{ rotate: 360 }}
                             transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                           />
@@ -1734,296 +1965,428 @@ export function BuildPage() {
           )}
 
           {/* Generate all outputs for current class */}
-          {!batchGenerating && currentChapter && !isGenerating && (
-            <div className="flex items-center gap-3 mb-4">
-              <button
-                onClick={generateAllOutputs}
-                disabled={anyLocalGenerating}
-                className="flex items-center gap-1.5 text-xs text-text-muted hover:text-violet-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                Generate all outputs
-              </button>
-              {anyLocalGenerating && (
-                <span className="text-xs text-text-muted">
-                  Generating... rate limits may cause automatic retries
-                </span>
-              )}
-            </div>
-          )}
+          {!batchGenerating && currentChapter && !isGenerating && (() => {
+            const missing = [
+              !quizHtml,
+              inClassQuizData.length === 0,
+              discussions.length === 0,
+              ...(advancedMode
+                ? [
+                    activities.length === 0,
+                    slidesData.length === 0,
+                    !audioTranscript,
+                    !currentChapter.weeklyChallengeData,
+                  ]
+                : []),
+            ].filter(Boolean).length;
+            return (
+              <div className="flex items-baseline gap-3 mb-4 flex-wrap">
+                {missing > 0 ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void generateAllOutputs()}
+                      disabled={anyLocalGenerating}
+                      title={
+                        anyLocalGenerating
+                          ? 'Generation is already running for this chapter.'
+                          : undefined
+                      }
+                    >
+                      ▸ Generate all materials for this chapter
+                    </Button>
+                    <span className="text-xs italic text-cb-text-muted">
+                      {anyLocalGenerating
+                        ? 'Generating… rate limits may cause automatic retries'
+                        : `${missing} of 7 remaining · a few minutes, on your keys`}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs italic text-cb-text-muted">
+                    All seven materials are drafted for this chapter.
+                  </span>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Generate chapter button when chapter not yet generated */}
           {!batchGenerating && !currentChapter && !isGenerating && (() => {
             const hasResearch = researchDossiers.some(d => d.chapterNumber === selectedChapterNum && d.sources.length > 0);
+            const romanIdx = selectedChapterNum - 1;
+            const roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX'][romanIdx] ?? String(selectedChapterNum);
             return (
-              <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center mb-4">
-                <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                  <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
+              <section
+                style={{
+                  padding: '32px 28px',
+                  background: 'var(--cb-ground-page)',
+                  border: '1px solid var(--cb-border-default)',
+                  borderRadius: 2,
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  className="cb-sc"
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--cb-text-muted)',
+                    letterSpacing: '0.14em',
+                  }}
+                >
+                  Chapter dossier
                 </div>
-                <p className="text-text-secondary mb-1">Class {selectedChapterNum}: {syllabusChapter?.title}</p>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: 16,
+                    marginTop: 6,
+                    marginBottom: 14,
+                  }}
+                >
+                  <span
+                    className="cb-italic"
+                    style={{
+                      fontSize: 28,
+                      color: 'var(--cb-accent-emphasis)',
+                      lineHeight: 1,
+                    }}
+                  >
+                    {roman}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 500,
+                      fontVariationSettings: '"opsz" 20',
+                      color: 'var(--cb-text-default)',
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {syllabusChapter?.title}
+                  </span>
+                </div>
                 {hasResearch ? (
                   <>
-                    <p className="text-text-muted text-xs mb-4">This class hasn't been generated yet.</p>
+                    <p
+                      className="cb-italic"
+                      style={{
+                        margin: '0 0 18px',
+                        fontSize: 14.5,
+                        color: 'var(--cb-text-muted)',
+                        lineHeight: 1.55,
+                        maxWidth: '72ch',
+                      }}
+                    >
+                      Research is in. Drafting a chapter takes several minutes — Claude
+                      reasons through the dossier, writes the prose, and weaves in
+                      citations. Settle in or grab a coffee; we'll keep going in the
+                      background if you click away.
+                    </p>
+                    {!openaiApiKey && (
+                      <div style={{ marginBottom: 18, maxWidth: '72ch' }}>
+                        <KeyMissingBanner
+                          tone="recommended"
+                          text={
+                            <>
+                              <strong>Heads up.</strong> Without an OpenAI key, this chapter
+                              will draft as text-only — no editorial figures inside the
+                              reading, and the slide deck for this chapter will be locked
+                              when you reach the slides tab.
+                            </>
+                          }
+                          ctaLabel="Add OpenAI key →"
+                          onCta={openKeysModal}
+                        />
+                      </div>
+                    )}
                     <Button onClick={() => generateChapter(selectedChapterNum)}>
-                      Generate This Class
+                      Draft this chapter →
                     </Button>
                   </>
                 ) : (
                   <>
-                    <p className="text-amber-400/80 text-xs mb-2">No research has been conducted for this class.</p>
-                    <p className="text-text-muted text-xs mb-4">Generating without research may include made-up references that don't exist.</p>
-                    <div className="flex gap-2 justify-center">
-                      <Button onClick={() => navigate('/research')}>Go to Research</Button>
-                      <Button variant="ghost" onClick={() => generateChapter(selectedChapterNum)}>Generate Anyway</Button>
+                    <p
+                      className="cb-italic"
+                      style={{
+                        margin: '0 0 6px',
+                        fontSize: 14.5,
+                        color: 'var(--cb-status-warning)',
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      No research yet for this chapter.
+                    </p>
+                    <p
+                      className="cb-italic"
+                      style={{
+                        margin: '0 0 18px',
+                        fontSize: 13.5,
+                        color: 'var(--cb-text-muted)',
+                        lineHeight: 1.55,
+                        maxWidth: '72ch',
+                      }}
+                    >
+                      Drafting without research may include unverified references. Better
+                      to go back and research first; or proceed anyway and verify by hand.
+                    </p>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <Button onClick={() => navigate('/research')}>
+                        Go to Research
+                      </Button>
+                      <Button variant="ghost" onClick={() => generateChapter(selectedChapterNum)}>
+                        Draft anyway
+                      </Button>
                     </div>
                   </>
                 )}
-              </div>
+              </section>
             );
           })()}
 
           {/* Tabs — only show when chapter exists or is generating */}
           {!batchGenerating && (currentChapter || isGenerating) && (
             <>
-              <div className="flex gap-1 mb-4 p-1 bg-bg-card rounded-lg border border-violet-500/10 w-fit">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`px-4 py-2 text-sm rounded-md transition-all cursor-pointer flex items-center gap-2 ${
-                      activeTab === tab.id
-                        ? 'bg-violet-500 text-white'
-                        : 'text-text-muted hover:text-text-secondary'
-                    }`}
-                  >
-                    {tab.label}
-                    {tabGenerating[tab.id] ? (
-                      <motion.span
-                        className="w-1.5 h-1.5 rounded-full bg-violet-400"
-                        animate={{ opacity: [0.4, 1, 0.4] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                      />
-                    ) : tabErrors[tab.id] ? (
-                      <span className="w-1.5 h-1.5 rounded-full bg-error" />
-                    ) : tab.ready ? (
-                      <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                    ) : null}
-                  </button>
-                ))}
+              <div
+                role="tablist"
+                aria-label="Chapter materials"
+                className="cb-build-tabs"
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                  e.preventDefault();
+                  const idx = tabs.findIndex((t) => t.id === activeTab);
+                  const next =
+                    e.key === 'ArrowRight'
+                      ? (idx + 1) % tabs.length
+                      : (idx - 1 + tabs.length) % tabs.length;
+                  setActiveTab(tabs[next].id);
+                }}
+                style={{
+                  display: 'flex',
+                  gap: 0,
+                  marginBottom: 24,
+                  borderBottom: '0.5px solid var(--cb-border-rule)',
+                  fontFamily: 'var(--font-cb-serif)',
+                }}
+              >
+                {tabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => setActiveTab(tab.id)}
+                      className="cb-focus"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        borderBottom: isActive
+                          ? '2px solid var(--cb-accent-emphasis)'
+                          : '2px solid transparent',
+                        marginBottom: -0.5,
+                        padding: '12px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        fontSize: 15,
+                        lineHeight: 1,
+                        fontWeight: isActive ? 500 : 400,
+                        color: isActive
+                          ? 'var(--cb-text-default)'
+                          : 'var(--cb-text-muted)',
+                        transition:
+                          'color 200ms cubic-bezier(0.32,0.04,0.32,1), border-color 200ms',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.color = 'var(--cb-text-default)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.color = 'var(--cb-text-muted)';
+                        }
+                      }}
+                    >
+                      {tab.label}
+                      {tabGenerating[tab.id] ? (
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: 999,
+                            background: 'var(--cb-accent-emphasis)',
+                            animation: 'cb-pen 1.2s ease-in-out infinite',
+                          }}
+                        />
+                      ) : tabErrors[tab.id] ? (
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: 999,
+                            background: 'var(--cb-status-danger)',
+                          }}
+                        />
+                      ) : tab.ready ? (
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: 999,
+                            background: 'var(--cb-status-success)',
+                          }}
+                        />
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Per-tab error */}
               {tabErrors[activeTab] && (
-                <div className="mb-4 p-3 rounded-lg bg-error/10 border border-error/20 text-error text-sm flex items-center justify-between">
+                <div
+                  style={{
+                    marginBottom: 20,
+                    padding: '12px 14px',
+                    background: 'var(--cb-status-danger-bg)',
+                    borderLeft: '2px solid var(--cb-status-danger)',
+                    fontSize: 14,
+                    lineHeight: 1.55,
+                    color: 'var(--cb-text-default)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    gap: 16,
+                  }}
+                >
                   <span>{tabErrors[activeTab]}</span>
-                  <button onClick={() => clearTabError(activeTab)} className="text-xs text-error/60 hover:text-error ml-3 shrink-0 cursor-pointer">Dismiss</button>
+                  <span style={{ display: 'flex', gap: 14, flexShrink: 0 }}>
+                    {tabRetryHandlers[activeTab] && (
+                      <button
+                        onClick={() => {
+                          const retry = tabRetryHandlers[activeTab];
+                          clearTabError(activeTab);
+                          retry?.();
+                        }}
+                        className="cb-focus"
+                        style={{
+                          background: 'transparent',
+                          border: 0,
+                          padding: 0,
+                          cursor: 'pointer',
+                          fontSize: 13,
+                          fontStyle: 'italic',
+                          color: 'var(--cb-accent-emphasis)',
+                          textDecoration: 'underline',
+                          textDecorationThickness: '0.5px',
+                          textUnderlineOffset: 3,
+                          whiteSpace: 'nowrap',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        retry
+                      </button>
+                    )}
+                    <button
+                      onClick={() => clearTabError(activeTab)}
+                      className="cb-focus"
+                      style={{
+                        background: 'transparent',
+                        border: 0,
+                        padding: 0,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontStyle: 'italic',
+                        color: 'var(--cb-accent-link)',
+                        textDecoration: 'underline',
+                        textDecorationThickness: '0.5px',
+                        textUnderlineOffset: 3,
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      dismiss
+                    </button>
+                  </span>
                 </div>
               )}
 
               {/* Content */}
               <AnimatePresence mode="wait">
-                {activeTab === 'chapter' && (
+                {activeTab === 'template-module' && setup.templateId && (
                   <motion.div
-                    key="chapter"
+                    key="template-module"
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden"
                   >
-                    {isGenerating && !chapterHtml ? (
-                      <div className="p-6">
-                        {thinkingText && (
-                          <div className="mb-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="flex gap-1">
-                                {[0, 1, 2].map(i => (
-                                  <motion.div
-                                    key={i}
-                                    className="w-1.5 h-1.5 rounded-full bg-violet-500"
-                                    animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                    transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                  />
-                                ))}
-                              </div>
-                              <span className="text-violet-400 text-xs font-medium">Thinking... {formatElapsed(elapsedSec)}</span>
-                            </div>
-                            <div className="relative max-h-24 overflow-hidden">
-                              <pre className="text-xs text-text-muted/50 whitespace-pre-wrap font-mono leading-relaxed">
-                                {thinkingText.slice(-400)}
-                              </pre>
-                              <div className="absolute inset-0 bg-gradient-to-b from-bg-card via-transparent to-bg-card pointer-events-none" />
-                            </div>
-                          </div>
-                        )}
-                        {streamingText && (
-                          <div className="flex items-center gap-3 mb-4">
-                            <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-                            <span className="text-text-secondary text-sm">Writing Class {selectedChapterNum}... ({Math.round(streamingText.split(/\s+/).length).toLocaleString()} words, {formatElapsed(elapsedSec)})</span>
-                          </div>
-                        )}
-                        {!streamingText && !thinkingText && (
-                          <div className="flex items-center gap-3">
-                            <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-                            <span className="text-text-secondary text-sm">Generating Class {selectedChapterNum}... {formatElapsed(elapsedSec)}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : chapterHtml ? (
-                      <>
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
-                          <p className="text-xs text-text-muted">Class {selectedChapterNum} reading</p>
-                          <Button
-                            size="sm"
-                            onClick={() => downloadFile(chapterHtml, `chapter-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.html`)}
-                          >
-                            <svg className="mr-1.5 w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download .html
-                          </Button>
-                        </div>
-                        <iframe
-                          srcDoc={chapterHtml}
-                          className="w-full border-0"
-                          style={{ height: '80vh' }}
-                          title={`Class ${selectedChapterNum} Reading`}
-                          sandbox="allow-scripts"
-                        />
-                        {/* Refine chapter section */}
-                        {!isGenerating && (
-                          <div className="border-t border-violet-500/10 p-5">
-                            <div className="flex items-start gap-3">
-                              <div className="flex-1">
-                                <textarea
-                                  value={refineFeedback}
-                                  onChange={(e) => setRefineFeedback(e.target.value)}
-                                  placeholder="Describe what you'd like changed (e.g., 'Expand the section on X', 'Simplify the introduction', 'Add more examples for Y')..."
-                                  className="w-full bg-bg-elevated border border-violet-500/10 rounded-lg px-4 py-3 text-sm text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-violet-500/30 transition-colors"
-                                  rows={2}
-                                />
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                disabled={!refineFeedback.trim()}
-                                onClick={() => setShowRefineConfirm(true)}
-                              >
-                                Refine
-                              </Button>
-                            </div>
-
-                            <AnimatePresence>
-                              {showRefineConfirm && (
-                                <motion.div
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  className="mt-3 p-4 rounded-lg bg-amber-500/5 border border-amber-500/20"
-                                >
-                                  <p className="text-sm text-amber-400 font-medium mb-2">This will clear all dependent content:</p>
-                                  <ul className="text-xs text-text-muted space-y-1 mb-3">
-                                    {quizHtml && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Practice Quiz</li>}
-                                    {inClassQuizData.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />In-Class Quiz</li>}
-                                    {weeklyChallengeHtml && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Weekly Challenge</li>}
-                                    {discussions.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Discussion Prompts</li>}
-                                    {activities.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Activities</li>}
-                                    {audioTranscript && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Audiobook</li>}
-                                    {slidesData.length > 0 && <li className="flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-amber-400" />Slides</li>}
-                                    {!quizHtml && inClassQuizData.length === 0 && !weeklyChallengeHtml && discussions.length === 0 && activities.length === 0 && !audioTranscript && slidesData.length === 0 && (
-                                      <li className="text-text-muted italic">No dependent content to clear</li>
-                                    )}
-                                  </ul>
-                                  <div className="flex gap-2">
-                                    <Button size="sm" onClick={() => refineChapter(refineFeedback)}>
-                                      Refine Reading
-                                    </Button>
-                                    <Button size="sm" variant="ghost" onClick={() => setShowRefineConfirm(false)}>
-                                      Cancel
-                                    </Button>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        )}
-                      </>
-                    ) : null}
+                    <TemplateModuleTab
+                      chapterNum={selectedChapterNum}
+                      content={templateContent}
+                      isGenerating={generatingTemplateContent === selectedChapterNum}
+                      canGenerate={!!syllabusChapter && generatingTemplateContent === null}
+                      onGenerate={generateTemplateContent}
+                      onStop={() => abortInFlight(materialAbortKey('template-module', selectedChapterNum))}
+                    />
                   </motion.div>
                 )}
 
+                {activeTab === 'chapter' && (
+                  <ReadingTab
+                    chapterHtml={chapterHtml}
+                    chapterNum={selectedChapterNum}
+                    chapterTitle={syllabusChapter?.title ?? ''}
+                    themeId={setup.themeId}
+                    isGenerating={isGenerating && chapterDraftingFor === selectedChapterNum}
+                    isRefining={isRefining}
+                    streamingText={streamingText}
+                    thinkingText={thinkingText}
+                    elapsedSec={elapsedSec}
+                    onStop={() => abortInFlight(materialAbortKey('reading', selectedChapterNum))}
+                    showImageHint={showChapterImageHint}
+                    onDismissImageHint={dismissChapterImageHint}
+                    refineFeedback={refineFeedback}
+                    onRefineFeedbackChange={setRefineFeedback}
+                    showRefineConfirm={showRefineConfirm}
+                    onShowRefineConfirm={setShowRefineConfirm}
+                    refineAutoRegen={refineAutoRegen}
+                    onRefineAutoRegenChange={setRefineAutoRegen}
+                    onRefine={refineChapter}
+                    dependents={(() => {
+                      const d: string[] = [];
+                      if (quizHtml) d.push('Practice quiz');
+                      if (inClassQuizData.length > 0) d.push('In-class quiz');
+                      if (weeklyChallengeHtml) d.push('Mastery challenge');
+                      if (discussions.length > 0) d.push('Discussion prompts');
+                      if (activities.length > 0) d.push('In-class activities');
+                      if (audioTranscript) d.push('Narrated audio');
+                      if (slidesData.length > 0) d.push('Slides');
+                      return d;
+                    })()}
+                  />
+                )}
+
                 {activeTab === 'quiz' && (
-                  <motion.div
-                    key="quiz"
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                  >
-                    {quizHtml ? (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
-                          <p className="text-xs text-text-muted">Gamified practice quiz with calibration scoring</p>
-                          <Button
-                            size="sm"
-                            onClick={() => downloadFile(quizHtml, `quiz-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.html`)}
-                          >
-                            <svg className="mr-1.5 w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download .html
-                          </Button>
-                        </div>
-                        <iframe
-                          srcDoc={quizHtml}
-                          className="w-full border-0"
-                          style={{ height: '80vh' }}
-                          title="Practice Quiz Preview"
-                          sandbox="allow-scripts"
-                        />
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingQuiz ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating gamified practice quiz with extended thinking...</span>
-                            <p className="text-xs text-text-muted mt-1">This uses maximum thinking for psychometric quality. May take a minute.</p>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M9 11l3 3L22 4" />
-                                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">Gamified Practice Quiz</p>
-                            <p className="text-text-muted text-xs mb-4">12 questions with calibration scoring, achievements, and confetti</p>
-                            <Button onClick={generateQuiz} disabled={!currentChapter || !!generatingQuiz}>
-                              Generate Practice Quiz
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
+                  <div key="quiz">
+                    <QuizTab
+                      quizHtml={quizHtml}
+                      chapterNum={selectedChapterNum}
+                      chapterTitle={syllabusChapter?.title ?? ''}
+                      isGenerating={generatingQuiz === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingQuiz}
+                      onGenerate={generateQuiz}
+                      onStop={() => abortInFlight(materialAbortKey('quiz', selectedChapterNum))}
+                    />
+                  </div>
                 )}
 
                 {activeTab === 'inclassquiz' && (
@@ -2033,116 +2396,16 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {inClassQuizData.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs text-text-muted">
-                            {inClassQuizData.length} questions — 5 shuffled versions (A-E) + answer key
-                          </p>
-                          <Button
-                            size="sm"
-                            onClick={async () => {
-                              try {
-                                const { generateQuizDocPackage } = await import('../services/export/quizDocExporter');
-                                const blob = await generateQuizDocPackage(
-                                  inClassQuizData,
-                                  syllabus!.courseTitle,
-                                  syllabusChapter!.title,
-                                );
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `quiz-${syllabusChapter!.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}.zip`;
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              } catch (err) {
-                                setError(friendlyError(err, 'Quiz export failed.'));
-                              }
-                            }}
-                          >
-                            <svg className="mr-1.5 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download Quiz Pack (.zip)
-                          </Button>
-                        </div>
-                        {inClassQuizData.map((q, i) => (
-                          <motion.div
-                            key={i}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.05 }}
-                            className="bg-bg-card border border-violet-500/10 rounded-xl p-5"
-                          >
-                            <div className="flex items-start gap-3 mb-3">
-                              <span className="shrink-0 w-7 h-7 rounded-lg bg-violet-500/10 flex items-center justify-center text-xs font-bold text-violet-400">
-                                {i + 1}
-                              </span>
-                              <p className="text-sm font-medium leading-relaxed">{q.question}</p>
-                            </div>
-                            <div className="ml-10 space-y-1.5">
-                              <div className="flex items-start gap-2 text-sm">
-                                <span className="text-success text-xs font-medium mt-0.5 shrink-0">a)</span>
-                                <span className="text-success">{q.correctAnswer}</span>
-                              </div>
-                              {q.distractors.map((d, j) => (
-                                <div key={j} className="flex items-start gap-2 text-sm">
-                                  <span className="text-text-muted text-xs font-medium mt-0.5 shrink-0">{String.fromCharCode(98 + j)})</span>
-                                  <span className="text-text-secondary">{d.text}</span>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="ml-10 mt-3 pt-3 border-t border-violet-500/5">
-                              <p className="text-xs text-success/80 mb-1.5">
-                                <span className="font-medium">Correct:</span> {q.correctFeedback}
-                              </p>
-                              {q.distractors.map((d, j) => (
-                                <p key={j} className="text-xs text-text-muted mb-1">
-                                  <span className="font-medium text-error/60">"{d.text}":</span> {d.feedback}
-                                </p>
-                              ))}
-                            </div>
-                          </motion.div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingInClassQuiz ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating in-class quiz with extended thinking...</span>
-                            <p className="text-xs text-text-muted mt-1">10 rigorous questions with detailed feedback. May take a minute.</p>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                                <line x1="16" y1="13" x2="8" y2="13" />
-                                <line x1="16" y1="17" x2="8" y2="17" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">In-Class Quiz</p>
-                            <p className="text-text-muted text-xs mb-4">10 questions exported as 5 shuffled Word doc versions (A-E) + answer key</p>
-                            <Button onClick={generateInClassQuiz} disabled={!currentChapter || !!generatingInClassQuiz}>
-                              Generate In-Class Quiz
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <InClassQuizTab
+                      questions={inClassQuizData}
+                      courseTitle={syllabus?.courseTitle ?? ''}
+                      chapterTitle={syllabusChapter?.title ?? ''}
+                      isGenerating={generatingInClassQuiz === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingInClassQuiz}
+                      onGenerate={generateInClassQuiz}
+                      onStop={() => abortInFlight(materialAbortKey('inclassquiz', selectedChapterNum))}
+                      onError={(msg) => setError(friendlyError(msg, 'Quiz export failed.'))}
+                    />
                   </motion.div>
                 )}
 
@@ -2153,61 +2416,15 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {weeklyChallengeHtml ? (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
-                          <p className="text-xs text-text-muted">Mastery challenge with mixed question types &amp; SCORM 2004</p>
-                          <Button
-                            size="sm"
-                            onClick={() => downloadFile(weeklyChallengeHtml, `weekly-challenge-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.html`)}
-                          >
-                            <svg className="mr-1.5 w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download .html
-                          </Button>
-                        </div>
-                        <iframe
-                          srcDoc={weeklyChallengeHtml}
-                          className="w-full border-0"
-                          style={{ height: '80vh' }}
-                          title="Weekly Challenge Preview"
-                          sandbox="allow-scripts"
-                        />
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingWeeklyChallenge ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating weekly challenge with extended thinking...</span>
-                            <p className="text-xs text-text-muted mt-1">Mixed question types: MCQ, two-stage, assertion-reason, matrix, slider, boss.</p>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center text-xl">
-                              &#x1F525;
-                            </div>
-                            <p className="text-text-secondary mb-1">Weekly Mastery Challenge</p>
-                            <p className="text-text-muted text-xs mb-4">10-12 questions, 6 assessment types, 85% mastery threshold, SCORM 2004</p>
-                            <Button onClick={generateWeeklyChallengeContent} disabled={!currentChapter || !!generatingWeeklyChallenge}>
-                              Generate Weekly Challenge
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <WeeklyChallengeTab
+                      challengeHtml={weeklyChallengeHtml}
+                      chapterNum={selectedChapterNum}
+                      chapterTitle={syllabusChapter?.title ?? ''}
+                      isGenerating={generatingWeeklyChallenge === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingWeeklyChallenge}
+                      onGenerate={generateWeeklyChallengeContent}
+                      onStop={() => abortInFlight(materialAbortKey('weeklychallenge', selectedChapterNum))}
+                    />
                   </motion.div>
                 )}
 
@@ -2218,93 +2435,16 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {discussions.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs text-text-muted">Display these on a slide as students arrive. Designed to spark conversation, not test knowledge.</p>
-                          <button
-                            onClick={() => copyToClipboard(formatDiscussionsText(), 'discussions')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors cursor-pointer shrink-0"
-                          >
-                            {copiedLabel === 'discussions' ? (
-                              <>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                Copied!
-                              </>
-                            ) : (
-                              <>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                </svg>
-                                Copy All
-                              </>
-                            )}
-                          </button>
-                        </div>
-                        {discussions.map((d, i) => (
-                          <motion.div
-                            key={i}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.08 }}
-                            className="bg-bg-card border border-violet-500/10 rounded-xl p-6"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <span className="text-xs px-2.5 py-1 rounded-full bg-violet-500/15 text-violet-400 font-medium inline-block mb-3">
-                                  {d.hook}
-                                </span>
-                                <p className="text-base text-text-primary leading-relaxed">{d.prompt}</p>
-                              </div>
-                              <button
-                                onClick={() => copyToClipboard(d.prompt, `discussion-${i}`)}
-                                className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-violet-400 hover:bg-violet-500/10 transition-colors cursor-pointer"
-                                title="Copy prompt"
-                              >
-                                {copiedLabel === `discussion-${i}` ? (
-                                  <svg className="w-4 h-4 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                ) : (
-                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                  </svg>
-                                )}
-                              </button>
-                            </div>
-                          </motion.div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingDiscussion ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating conversation starters...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">Conversation Starters</p>
-                            <p className="text-text-muted text-xs mb-4">5-6 provocative prompts to display on a slide as students arrive</p>
-                            <Button onClick={generateDiscussion} disabled={!currentChapter || !!generatingDiscussion}>
-                              Generate Conversation Starters
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <DiscussionTab
+                      discussions={discussions}
+                      isGenerating={generatingDiscussion === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingDiscussion}
+                      onGenerate={generateDiscussion}
+                      onStop={() => abortInFlight(materialAbortKey('discussion', selectedChapterNum))}
+                      onCopy={copyToClipboard}
+                      copiedLabel={copiedLabel}
+                      formatDiscussionsText={formatDiscussionsText}
+                    />
                   </motion.div>
                 )}
 
@@ -2315,257 +2455,26 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {activities.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => copyToClipboard(formatActivitiesText(), 'activities')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors cursor-pointer"
-                          >
-                            {copiedLabel === 'activities' ? (
-                              <>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                Copied!
-                              </>
-                            ) : (
-                              <>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                </svg>
-                                Copy All
-                              </>
-                            )}
-                          </button>
-                        </div>
-                        {activities.map((a, i) => {
-                          const detail = expandedActivities[i];
-                          const isExpanding = expandingActivity === i;
-                          const isExpanded = !!detail;
-
-                          return (
-                            <motion.div
-                              key={i}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: i * 0.08 }}
-                              className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden"
-                            >
-                              <div className="p-5">
-                                <div className="flex items-start justify-between gap-3 mb-2">
-                                  <h3 className="text-base font-semibold">{a.title}</h3>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      onClick={() => {
-                                        const d = expandedActivities[i];
-                                        let text = `${a.title}  (${a.duration})\n\n${a.description}\n\nMaterials: ${a.materials}\nLearning Goal: ${a.learningGoal}\nScaling: ${a.scalingNotes}`;
-                                        if (d) {
-                                          text += '\n\nStep-by-Step Guide:\n' + d.steps.map(s => `  [${s.timing}] ${s.instruction}${s.studentAction ? `\n    → Students: ${s.studentAction}` : ''}`).join('\n');
-                                          if (d.facilitationTips.length) text += '\n\nFacilitation Tips:\n' + d.facilitationTips.map(t => `  • ${t}`).join('\n');
-                                          if (d.commonPitfalls.length) text += '\n\nCommon Pitfalls:\n' + d.commonPitfalls.map(p => `  • ${p}`).join('\n');
-                                          text += `\n\nDebrief Guide:\n  ${d.debriefGuide}`;
-                                          if (d.variations.length) text += '\n\nVariations:\n' + d.variations.map(v => `  • ${v}`).join('\n');
-                                          if (d.assessmentIdeas) text += `\n\nAssessment Ideas:\n  ${d.assessmentIdeas}`;
-                                        }
-                                        copyToClipboard(text, `activity-${i}`);
-                                      }}
-                                      className="p-1.5 rounded-md text-text-muted hover:text-violet-400 hover:bg-violet-500/10 transition-colors cursor-pointer"
-                                      title="Copy activity"
-                                    >
-                                      {copiedLabel === `activity-${i}` ? (
-                                        <svg className="w-3.5 h-3.5 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                      ) : (
-                                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                        </svg>
-                                      )}
-                                    </button>
-                                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400">
-                                      {a.duration}
-                                    </span>
-                                  </div>
-                                </div>
-                                <p className="text-sm text-text-secondary mb-3 leading-relaxed">{a.description}</p>
-                                <div className="grid grid-cols-3 gap-3 text-xs mb-3">
-                                  <div>
-                                    <span className="text-text-muted font-medium block mb-0.5">Materials</span>
-                                    <span className="text-text-secondary">{a.materials}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-text-muted font-medium block mb-0.5">Learning Goal</span>
-                                    <span className="text-text-secondary">{a.learningGoal}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-text-muted font-medium block mb-0.5">Scaling</span>
-                                    <span className="text-text-secondary">{a.scalingNotes}</span>
-                                  </div>
-                                </div>
-
-                                {!isExpanded && !isExpanding && (
-                                  <button
-                                    onClick={() => fleshOutActivity(i)}
-                                    disabled={expandingActivity !== null}
-                                    className="text-xs text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-default"
-                                  >
-                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <circle cx="12" cy="12" r="10" />
-                                      <line x1="12" y1="8" x2="12" y2="16" />
-                                      <line x1="8" y1="12" x2="16" y2="12" />
-                                    </svg>
-                                    Expand to full guide
-                                  </button>
-                                )}
-                                {isExpanding && (
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex gap-1">
-                                      {[0, 1, 2].map(j => (
-                                        <motion.div
-                                          key={j}
-                                          className="w-1.5 h-1.5 rounded-full bg-violet-500"
-                                          animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                          transition={{ duration: 0.8, delay: j * 0.12, repeat: Infinity }}
-                                        />
-                                      ))}
-                                    </div>
-                                    <span className="text-xs text-violet-400">Expanding guide...</span>
-                                  </div>
-                                )}
-                                {isExpanded && (
-                                  <button
-                                    onClick={() => setExpandedActivities(prev => { const next = { ...prev }; delete next[i]; return next; })}
-                                    className="text-xs text-text-muted hover:text-text-secondary transition-colors flex items-center gap-1.5 cursor-pointer"
-                                  >
-                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <circle cx="12" cy="12" r="10" />
-                                      <line x1="8" y1="12" x2="16" y2="12" />
-                                    </svg>
-                                    Collapse
-                                  </button>
-                                )}
-                              </div>
-
-                              <AnimatePresence>
-                                {isExpanded && (
-                                  <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="border-t border-violet-500/10"
-                                  >
-                                    <div className="p-5 space-y-5 bg-violet-500/[0.02]">
-                                      <div>
-                                        <h4 className="text-sm font-semibold text-violet-400 mb-3 flex items-center gap-2">
-                                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                                          </svg>
-                                          Step-by-Step Guide
-                                        </h4>
-                                        <div className="space-y-3">
-                                          {detail.steps.map((s) => (
-                                            <div key={s.step} className="flex gap-3">
-                                              <div className="shrink-0 w-16 text-xs text-amber-400 font-mono pt-0.5">{s.timing}</div>
-                                              <div className="flex-1 border-l-2 border-violet-500/20 pl-3">
-                                                <p className="text-sm text-text-primary">{s.instruction}</p>
-                                                {s.studentAction && (
-                                                  <p className="text-xs text-text-muted mt-1 italic">Students: {s.studentAction}</p>
-                                                )}
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="bg-bg-card rounded-lg p-4 border border-violet-500/10">
-                                          <h4 className="text-xs font-semibold text-success mb-2">Facilitation Tips</h4>
-                                          <ul className="space-y-1.5">
-                                            {detail.facilitationTips.map((tip, j) => (
-                                              <li key={j} className="text-xs text-text-secondary flex items-start gap-2">
-                                                <span className="w-1 h-1 rounded-full bg-success shrink-0 mt-1.5" />
-                                                {tip}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                        <div className="bg-bg-card rounded-lg p-4 border border-violet-500/10">
-                                          <h4 className="text-xs font-semibold text-amber-400 mb-2">Common Pitfalls</h4>
-                                          <ul className="space-y-1.5">
-                                            {detail.commonPitfalls.map((pitfall, j) => (
-                                              <li key={j} className="text-xs text-text-secondary flex items-start gap-2">
-                                                <span className="w-1 h-1 rounded-full bg-amber-400 shrink-0 mt-1.5" />
-                                                {pitfall}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      </div>
-
-                                      <div className="bg-bg-card rounded-lg p-4 border border-violet-500/10">
-                                        <h4 className="text-xs font-semibold text-violet-400 mb-2">Debrief Guide</h4>
-                                        <p className="text-xs text-text-secondary leading-relaxed">{detail.debriefGuide}</p>
-                                      </div>
-
-                                      {detail.variations.length > 0 && (
-                                        <div>
-                                          <h4 className="text-xs font-semibold text-text-muted mb-2">Variations</h4>
-                                          <ul className="space-y-1.5">
-                                            {detail.variations.map((v, j) => (
-                                              <li key={j} className="text-xs text-text-secondary flex items-start gap-2">
-                                                <span className="w-1 h-1 rounded-full bg-violet-500/50 shrink-0 mt-1.5" />
-                                                {v}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-
-                                      {detail.assessmentIdeas && (
-                                        <div className="bg-bg-card rounded-lg p-4 border border-violet-500/10">
-                                          <h4 className="text-xs font-semibold text-text-muted mb-2">Assessment Ideas</h4>
-                                          <p className="text-xs text-text-secondary leading-relaxed">{detail.assessmentIdeas}</p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingActivities ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating activity suggestions...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="12" cy="12" r="10" />
-                                <polygon points="10 8 16 12 10 16 10 8" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">In-Class Activities</p>
-                            <p className="text-text-muted text-xs mb-4">4-6 dynamic activities with timing and scaling notes</p>
-                            <Button onClick={generateActivities} disabled={!currentChapter || !!generatingActivities}>
-                              Generate Activities
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <ActivitiesTab
+                      activities={activities}
+                      expandedActivities={expandedActivities}
+                      expandingActivity={expandingActivity}
+                      copiedLabel={copiedLabel}
+                      isGenerating={generatingActivities === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingActivities}
+                      onGenerate={generateActivities}
+                      onStop={() => abortInFlight(materialAbortKey('activities', selectedChapterNum))}
+                      onCopy={copyToClipboard}
+                      onFleshOut={fleshOutActivity}
+                      onCollapse={(i) =>
+                        setExpandedActivities((prev) => {
+                          const next = { ...prev };
+                          delete next[i];
+                          return next;
+                        })
+                      }
+                      formatActivitiesText={formatActivitiesText}
+                    />
                   </motion.div>
                 )}
 
@@ -2576,150 +2485,26 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {audioTranscript ? (
-                      <div className="space-y-4">
-                        {audioUrl && (
-                          <div className="bg-bg-card border border-violet-500/10 rounded-xl p-5">
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="w-10 h-10 rounded-full bg-violet-500/10 flex items-center justify-center">
-                                <svg className="w-5 h-5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                                </svg>
-                              </div>
-                              <div className="flex-1">
-                                <p className="text-sm font-medium">Class Audiobook</p>
-                                <p className="text-xs text-text-muted">Generated with Gemini TTS</p>
-                              </div>
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  const a = document.createElement('a');
-                                  a.href = audioUrl;
-                                  a.download = `audio-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.wav`;
-                                  a.click();
-                                }}
-                              >
-                                <svg className="mr-1.5 w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                  <polyline points="7 10 12 15 17 10" />
-                                  <line x1="12" y1="15" x2="12" y2="3" />
-                                </svg>
-                                Download .wav
-                              </Button>
-                            </div>
-                            <audio controls className="w-full" src={audioUrl}>
-                              Your browser does not support the audio element.
-                            </audio>
-                          </div>
-                        )}
-                        {!audioUrl && geminiApiKey && audioError && (
-                          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-                            <p className="text-amber-400 text-sm mb-1">
-                              Audio synthesis failed: {audioError}
-                            </p>
-                            <Button size="sm" variant="secondary" className="mt-2" onClick={retryAudio} disabled={!!generatingAudio}>
-                              Retry Audio
-                            </Button>
-                          </div>
-                        )}
-                        {!audioUrl && geminiApiKey && !audioError && (
-                          <div className="bg-bg-card border border-violet-500/10 rounded-xl p-4 text-center">
-                            {generatingAudio ? (
-                              <div className="flex flex-col items-center gap-3">
-                                <div className="flex gap-1">
-                                  {[0, 1, 2].map(i => (
-                                    <motion.div
-                                      key={i}
-                                      className="w-2 h-2 rounded-full bg-violet-500"
-                                      animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                      transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                    />
-                                  ))}
-                                </div>
-                                <span className="text-text-secondary text-sm">
-                                  {audioChunkProgress
-                                    ? `Synthesizing audio: chunk ${audioChunkProgress.current} of ${audioChunkProgress.total}...`
-                                    : 'Synthesizing audio...'}
-                                </span>
-                                {audioChunkProgress && (
-                                  <div className="w-48">
-                                    <div className="h-1.5 bg-bg-elevated rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-violet-500 rounded-full transition-all duration-500"
-                                        style={{ width: `${(audioChunkProgress.current / audioChunkProgress.total) * 100}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <>
-                                <p className="text-text-secondary text-sm mb-1">Transcript ready — click below to generate audio.</p>
-                                <Button size="sm" variant="secondary" className="mt-2" onClick={retryAudio} disabled={!!generatingAudio}>
-                                  Generate Audio
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                        {!audioUrl && !geminiApiKey && (
-                          <div className="bg-bg-card border border-violet-500/10 rounded-xl p-4 text-center">
-                            <p className="text-text-secondary text-sm">Transcript ready — add a Gemini API key in Setup to generate audio.</p>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingAudio ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">
-                              {audioPhase === 'transcript'
-                                ? 'Adapting chapter for spoken delivery...'
-                                : audioChunkProgress
-                                ? `Synthesizing audio: chunk ${audioChunkProgress.current} of ${audioChunkProgress.total}...`
-                                : 'Preparing audio synthesis...'}
-                            </span>
-                            {audioPhase === 'synthesizing' && audioChunkProgress && (
-                              <div className="w-48 mt-2">
-                                <div className="h-1.5 bg-bg-elevated rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-violet-500 rounded-full transition-all duration-500"
-                                    style={{ width: `${(audioChunkProgress.current / audioChunkProgress.total) * 100}%` }}
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">Class Audiobook</p>
-                            <p className="text-text-muted text-xs mb-4">
-                              {geminiApiKey
-                                ? 'AI-adapted transcript + Gemini TTS audio synthesis'
-                                : 'Generate a spoken-word transcript (add Gemini key in Setup for audio)'}
-                            </p>
-                            <Button onClick={generateAudio} disabled={!currentChapter || !!generatingAudio}>
-                              Generate Audiobook
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <AudioTab
+                      audioTranscript={audioTranscript}
+                      audioUrl={audioUrl}
+                      audioError={audioError}
+                      audioPersistNote={audioPersistNote}
+                      audioPhase={audioPhase}
+                      audioChunkProgress={audioChunkProgress}
+                      chapterNum={selectedChapterNum}
+                      chapterTitle={syllabusChapter?.title ?? ''}
+                      isGenerating={generatingAudio === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingAudio}
+                      hasElevenLabsKey={!!elevenLabsApiKey}
+                      onGenerate={generateAudio}
+                      onRetry={retryAudio}
+                      onAddKey={openKeysModal}
+                      onStop={() => abortInFlight(materialAbortKey('audio', selectedChapterNum))}
+                      onSaveTranscript={(text) =>
+                        updateChapter(selectedChapterNum, { audioTranscript: text })
+                      }
+                    />
                   </motion.div>
                 )}
 
@@ -2730,328 +2515,34 @@ export function BuildPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                   >
-                    {slidesData.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="bg-bg-card border border-violet-500/20 rounded-xl p-6 flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                                <line x1="8" y1="21" x2="16" y2="21" />
-                                <line x1="12" y1="17" x2="12" y2="21" />
-                              </svg>
-                            </div>
-                            <div>
-                              <p className="text-sm font-semibold">{slidesData.length} slides with speaker notes</p>
-                              <p className="text-xs text-text-muted mt-0.5">Dark-themed PowerPoint deck, ready to teach</p>
-                            </div>
-                          </div>
-                          <Button
-                            onClick={async () => {
-                              try {
-                                const { generatePptx } = await import('../services/export/pptxExporter');
-                                const blob = await generatePptx(slidesData, syllabus!.courseTitle, syllabusChapter!.title, setup.themeId);
-                                downloadFile(blob, `slides-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'chapter')}.pptx`);
-                              } catch (err) {
-                                setError(friendlyError(err, 'Slides export failed.'));
-                              }
-                            }}
-                          >
-                            <svg className="mr-1.5 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download .pptx
-                          </Button>
-                        </div>
-
-                        <div>
-                          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Speaker Notes</h3>
-                          <div className="space-y-1">
-                            {slidesData.map((slide, i) => {
-                              const isExpanded = expandedSlideNotes.has(i);
-                              const hasNotes = !!slide.speakerNotes;
-                              return (
-                                <div key={i} className="border border-violet-500/10 rounded-lg overflow-hidden">
-                                  <button
-                                    onClick={() => {
-                                      if (!hasNotes) return;
-                                      setExpandedSlideNotes(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(i)) next.delete(i);
-                                        else next.add(i);
-                                        return next;
-                                      });
-                                    }}
-                                    className={`w-full flex items-center gap-3 px-4 py-3 text-left bg-transparent border-0 transition-colors ${
-                                      hasNotes ? 'cursor-pointer hover:bg-violet-500/5' : 'cursor-default opacity-60'
-                                    }`}
-                                  >
-                                    <span className="text-xs text-text-muted font-mono w-5 shrink-0 text-right">{i + 1}</span>
-                                    <span className="text-sm text-text-primary truncate flex-1">{slide.title}</span>
-                                    {slide.layout && slide.layout !== 'content' && (
-                                      <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">{slide.layout}</span>
-                                    )}
-                                    {hasNotes && (
-                                      <svg
-                                        className={`w-3.5 h-3.5 text-text-muted shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                                      >
-                                        <polyline points="6 9 12 15 18 9" />
-                                      </svg>
-                                    )}
-                                  </button>
-                                  <AnimatePresence>
-                                    {isExpanded && hasNotes && (
-                                      <motion.div
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: 'auto', opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        transition={{ duration: 0.2 }}
-                                        className="overflow-hidden"
-                                      >
-                                        <div className="px-4 pb-4 pl-12">
-                                          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{slide.speakerNotes}</p>
-                                        </div>
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingSlides ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating lecture slides with speaker notes...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                                <line x1="8" y1="21" x2="16" y2="21" />
-                                <line x1="12" y1="17" x2="12" y2="21" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">Lecture Slides</p>
-                            <p className="text-text-muted text-xs mb-4">8-12 themed PowerPoint slides with speaker notes</p>
-                            <Button onClick={generateSlides} disabled={!currentChapter || !!generatingSlides}>
-                              Generate Slides
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-
-                {activeTab === 'infographic' && (
-                  <motion.div
-                    key="infographic"
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -5 }}
-                    className="space-y-4"
-                  >
-                    {infographicDataUri ? (
-                      <div className="space-y-4">
-                        <div className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden">
-                          <img
-                            src={infographicDataUri}
-                            alt={`Infographic for ${syllabusChapter?.title || 'class'}`}
-                            className="w-full h-auto"
-                          />
-                        </div>
-                        <div className="flex gap-3">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              const a = document.createElement('a');
-                              a.href = infographicDataUri;
-                              a.download = `infographic-${selectedChapterNum}-${slugify(syllabusChapter?.title || 'class')}.jpg`;
-                              a.click();
-                            }}
-                          >
-                            <svg className="mr-1.5 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download .jpg
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={generateInfographic}
-                            disabled={!!generatingInfographic}
-                          >
-                            Regenerate
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="bg-bg-card border border-violet-500/10 rounded-xl p-8 text-center">
-                        {generatingInfographic ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map(i => (
-                                <motion.div
-                                  key={i}
-                                  className="w-2 h-2 rounded-full bg-violet-500"
-                                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
-                                  transition={{ duration: 0.8, delay: i * 0.12, repeat: Infinity }}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-text-secondary text-sm">Generating infographic with Gemini...</span>
-                            <span className="text-text-muted text-xs">Claude writes the prompt, then Gemini creates the image</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                                <circle cx="8.5" cy="8.5" r="1.5" />
-                                <polyline points="21 15 16 10 5 21" />
-                              </svg>
-                            </div>
-                            <p className="text-text-secondary mb-1">Educational Infographic</p>
-                            <p className="text-text-muted text-xs mb-4">AI-generated visual summary of key concepts</p>
-                            <Button onClick={generateInfographic} disabled={!currentChapter || !!generatingInfographic}>
-                              Generate Infographic
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-
-                {activeTab === 'template-module' && (
-                  <motion.div
-                    key="template-module"
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    className="bg-bg-card border border-violet-500/10 rounded-xl overflow-hidden"
-                  >
-                    <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/10">
-                      <div>
-                        <p className="text-xs text-text-muted">
-                          Canvas module — Module {selectedChapterNum} Overview, {templateContent ? `${templateContent.instructorNotes.length} Instructor Notes page${templateContent.instructorNotes.length === 1 ? '' : 's'}` : '1+ Instructor Notes pages'}, 1 Discussion
-                        </p>
-                        <p className="text-[11px] text-text-muted/80 mt-0.5">
-                          The locked <code className="text-violet-300">M{selectedChapterNum} Instructor Notes:</code> / <code className="text-violet-300">M{selectedChapterNum} Discussion:</code> prefixes are added at export time.
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={templateContent ? 'secondary' : 'primary'}
-                        onClick={generateTemplateContent}
-                        disabled={!currentChapter || !!generatingTemplateContent || !syllabusChapter}
-                        isLoading={generatingTemplateContent === selectedChapterNum}
-                      >
-                        {templateContent ? 'Regenerate' : 'Generate Canvas Module'}
-                      </Button>
-                    </div>
-
-                    {generatingTemplateContent === selectedChapterNum && !templateContent && (
-                      <div className="p-6 flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-                        <span className="text-text-secondary text-sm">
-                          Generating Canvas module content for Class {selectedChapterNum}... {formatElapsed(elapsedSec)}
-                        </span>
-                      </div>
-                    )}
-
-                    {templateContent && (
-                      <div className="p-5 space-y-6">
-                        <section>
-                          <h3 className="text-sm font-medium text-text-primary mb-2">
-                            <span className="text-violet-300 font-mono">Module {selectedChapterNum} Overview</span>
-                          </h3>
-                          <div
-                            className="prose prose-sm prose-invert max-w-none rounded-lg border border-violet-500/10 bg-bg-base p-4 text-sm"
-                            dangerouslySetInnerHTML={{ __html: templateContent.moduleOverviewHtml }}
-                          />
-                        </section>
-
-                        <section>
-                          <h3 className="text-sm font-medium text-text-primary mb-2">
-                            Instructor Notes ({templateContent.instructorNotes.length} page{templateContent.instructorNotes.length === 1 ? '' : 's'})
-                          </h3>
-                          <div className="space-y-3">
-                            {templateContent.instructorNotes.map((note, i) => (
-                              <details
-                                key={i}
-                                className="rounded-lg border border-violet-500/10 bg-bg-base"
-                                open={i === 0}
-                              >
-                                <summary className="cursor-pointer px-4 py-2.5 text-sm">
-                                  <span className="text-violet-300 font-mono">M{selectedChapterNum} Instructor Notes:</span>{' '}
-                                  <span className="text-text-primary">{note.title}</span>
-                                </summary>
-                                <div
-                                  className="prose prose-sm prose-invert max-w-none px-4 pb-4 pt-2 text-sm"
-                                  dangerouslySetInnerHTML={{ __html: note.htmlContent }}
-                                />
-                              </details>
-                            ))}
-                          </div>
-                        </section>
-
-                        <section>
-                          <h3 className="text-sm font-medium text-text-primary mb-2">Discussion</h3>
-                          <div className="rounded-lg border border-violet-500/10 bg-bg-base p-4">
-                            <p className="text-sm mb-2">
-                              <span className="text-violet-300 font-mono">M{selectedChapterNum} Discussion:</span>{' '}
-                              <span className="text-text-primary font-medium">{templateContent.discussion.title}</span>
-                            </p>
-                            <div
-                              className="prose prose-sm prose-invert max-w-none text-sm"
-                              dangerouslySetInnerHTML={{ __html: templateContent.discussion.promptHtml }}
-                            />
-                          </div>
-                        </section>
-                      </div>
-                    )}
-
-                    {!templateContent && generatingTemplateContent !== selectedChapterNum && (
-                      <div className="p-12 text-center">
-                        <div className="w-12 h-12 rounded-lg bg-violet-500/10 flex items-center justify-center mx-auto mb-4">
-                          <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="16" y1="13" x2="8" y2="13" />
-                            <line x1="16" y1="17" x2="8" y2="17" />
-                            <polyline points="10 9 9 9 8 9" />
-                          </svg>
-                        </div>
-                        <p className="text-text-secondary mb-1">Canvas Module Content</p>
-                        <p className="text-text-muted text-xs mb-4">
-                          1 Module Overview · 1+ Instructor Notes pages · 1 Discussion
-                        </p>
-                        <Button onClick={generateTemplateContent} disabled={!currentChapter || !!generatingTemplateContent}>
-                          Generate Canvas Module
-                        </Button>
-                      </div>
-                    )}
+                    <SlidesTab
+                      slides={slidesData}
+                      chapterNum={selectedChapterNum}
+                      isGenerating={generatingSlides === selectedChapterNum}
+                      canGenerate={!!currentChapter && !generatingSlides}
+                      hasOpenAiKey={!!openaiApiKey}
+                      showImageHint={showSlideImageHint}
+                      onDismissImageHint={dismissSlideImageHint}
+                      onGenerate={generateSlides}
+                      onStop={() => abortInFlight(materialAbortKey('slides', selectedChapterNum))}
+                      onDownloadDeck={downloadSlideDeck}
+                      onAddKey={openKeysModal}
+                      slidesRender={slidesRender}
+                      editedSlidePrompts={editedSlidePrompts}
+                      onSlidePromptDraftChange={(i, text) =>
+                        setEditedSlidePrompts((prev) => ({ ...prev, [i]: text }))
+                      }
+                      onSlidePromptDraftReset={(i) =>
+                        setEditedSlidePrompts((prev) => {
+                          const next = { ...prev };
+                          delete next[i];
+                          return next;
+                        })
+                      }
+                      refiningSlideIdx={refiningSlideIdx}
+                      slideRefineError={slideRefineError}
+                      onRefineSlide={refineSlideImage}
+                    />
                   </motion.div>
                 )}
 
@@ -3060,6 +2551,71 @@ export function BuildPage() {
           )}
         </div>
       </div>
-    </motion.div>
+
+      {/* Chapter image refine drawer — overlays from the right when the user
+          clicks any rendered image inside the chapter iframe. */}
+      <ChapterImageRefineDrawer
+        state={chapterImageRefine}
+        draft={chapterImageDraft}
+        onDraftChange={setChapterImageDraft}
+        onClose={closeChapterImageRefine}
+        onRefine={() => void refineChapterImage()}
+        isRefining={chapterImageRefining}
+        hasOpenAiKey={!!openaiApiKey}
+        error={chapterImageRefineError}
+        onAddKey={openKeysModal}
+      />
+
+      {/* Shortcuts help — toggled by ? */}
+      <ShortcutsHelpOverlay
+        open={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
+      />
+
+      {/* Discoverability affordance for the keyboard shortcuts. */}
+      {!batchGenerating && !chapterImageRefining && !shortcutsHelpOpen && (
+        <button
+          type="button"
+          onClick={() => setShortcutsHelpOpen(true)}
+          aria-label="Show keyboard shortcuts"
+          title="Show keyboard shortcuts (?)"
+          className="cb-mono cb-shortcuts-chip"
+          style={{
+            position: 'fixed',
+            bottom: 16,
+            right: 16,
+            zIndex: 30,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 10px 7px',
+            background: 'var(--cb-ground-page)',
+            border: '0.5px solid var(--cb-border-default)',
+            borderRadius: 2,
+            fontSize: 10.5,
+            letterSpacing: '0.08em',
+            color: 'var(--cb-text-muted)',
+            cursor: 'pointer',
+            boxShadow: '0 4px 14px rgba(20,17,13,0.06)',
+            transition: 'color 160ms ease, border-color 160ms ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--cb-accent-emphasis)';
+            e.currentTarget.style.borderColor = 'var(--cb-accent-emphasis)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--cb-text-muted)';
+            e.currentTarget.style.borderColor = 'var(--cb-border-default)';
+          }}
+        >
+          shortcuts <span style={{ opacity: 0.7 }}>·</span> ?
+        </button>
+      )}
+
+      {/* Transient toast — used by Cmd/Ctrl+S "you don't need to save" feedback */}
+      <TransientToast message={transientToast} />
+    </div>
   );
 }
+
+

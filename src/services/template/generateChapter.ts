@@ -26,6 +26,8 @@ export interface GenerateTemplateChapterInput {
   /** Ollama-specific overrides for non-browser callers. */
   ollamaApiKey?: string;
   ollamaModel?: string;
+  /** Optional cancellation — aborting rejects with the SDK's abort error. */
+  signal?: AbortSignal;
   onText?: (text: string) => void;
   onError?: (err: Error) => void;
 }
@@ -43,7 +45,7 @@ export interface GenerateTemplateChapterResult {
 export async function generateTemplateChapter(
   input: GenerateTemplateChapterInput,
 ): Promise<GenerateTemplateChapterResult> {
-  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, provider, ollamaApiKey, ollamaModel, onText, onError } = input;
+  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, provider, ollamaApiKey, ollamaModel, signal, onText, onError } = input;
 
   const { systemPrompt, userMessage } = buildTemplateChapterPrompt({
     setup,
@@ -68,6 +70,7 @@ export async function generateTemplateChapter(
       provider,
       ollamaApiKey,
       ollamaModel,
+      signal,
     },
     {
       onText,

@@ -34,6 +34,9 @@ export interface StreamOptions {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools?: any[];
   maxTokens?: number;
+  /** Optional cancellation. Aborting rejects the call with the SDK's abort
+   *  error — call sites should treat that as a silent cancel, not a failure. */
+  signal?: AbortSignal;
   /** Provider override. If omitted, the active provider in apiStore is used. */
   provider?: LlmProvider;
   /**

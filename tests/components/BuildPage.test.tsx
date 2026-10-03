@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { BuildPage } from '../../src/pages/BuildPage';
@@ -7,6 +7,7 @@ import { useCourseStore } from '../../src/store/courseStore';
 import { useApiStore } from '../../src/store/apiStore';
 import { useUiStore } from '../../src/store/uiStore';
 import { useTemplateStore } from '../../src/store/templateStore';
+import { generateTemplateChapter } from '../../src/services/template/generateChapter';
 import type { Syllabus, GeneratedChapter, ResearchDossier } from '../../src/types/course';
 
 // Network/streaming + any backend the page can fire on mount: stub so tests
@@ -14,6 +15,18 @@ import type { Syllabus, GeneratedChapter, ResearchDossier } from '../../src/type
 vi.mock('../../src/services/claude/streaming', () => ({
   streamMessage: vi.fn(() => new Promise(() => {})),
   streamWithRetry: vi.fn(() => new Promise(() => {})),
+}));
+
+// BuildPage dynamic-imports this for the Canvas Module tab.
+vi.mock('../../src/services/template/generateChapter', () => ({
+  generateTemplateChapter: vi.fn(async () => ({
+    content: {
+      moduleOverviewHtml: '<p>Overview body</p>',
+      instructorNotes: [{ title: 'Note one', htmlContent: '<p>note</p>' }],
+      discussion: { title: 'Talk it over', promptHtml: '<p>prompt</p>' },
+    },
+    rawText: '',
+  })),
 }));
 
 const navigateMock = vi.fn();
@@ -63,9 +76,33 @@ function renderPage() {
   );
 }
 
+function activateTemplate() {
+  useCourseStore.setState({
+    setup: { ...useCourseStore.getState().setup, templateId: 'tpl-1' },
+  });
+  useTemplateStore.setState({
+    templates: [
+      {
+        id: 'tpl-1',
+        parserVersion: 3,
+        name: 'Stats Template',
+        uploadedAt: new Date().toISOString(),
+        fileSizeBytes: 1234,
+        modules: [],
+        images: [],
+        ltiResources: [],
+        courseSettings: {},
+        totalFiles: 5,
+      },
+    ],
+    activeTemplateId: 'tpl-1',
+  });
+}
+
 describe('<BuildPage />', () => {
   beforeEach(() => {
     navigateMock.mockClear();
+    vi.mocked(generateTemplateChapter).mockClear();
     useCourseStore.getState().reset();
     useUiStore.setState({
       error: null,
@@ -78,7 +115,6 @@ describe('<BuildPage />', () => {
     });
     useApiStore.setState({
       claudeApiKey: 'sk-x',
-      geminiApiKey: '',
       advancedMode: false,
     });
     useTemplateStore.setState({ templates: [], activeTemplateId: null });
@@ -91,11 +127,11 @@ describe('<BuildPage />', () => {
     }
   });
 
-  it('shows an empty state with a Back to Syllabus button when no syllabus is in the store', async () => {
+  it('shows an empty state with a Back to syllabus button when no syllabus is in the store', async () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(screen.getByText(/no syllabus available/i)).toBeInTheDocument();
+    expect(screen.getByText(/no syllabus generated yet/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /back to syllabus/i }));
     expect(navigateMock).toHaveBeenCalledWith('/syllabus');
   });
@@ -104,8 +140,8 @@ describe('<BuildPage />', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3) });
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /^build$/i })).toBeInTheDocument();
-    expect(screen.getByText(/0\/3 classes/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Intro to Statistics' })).toBeInTheDocument();
+    expect(screen.getByText(/0 of 3 chapters built/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /go to export/i })).toBeDisabled();
   });
 
@@ -126,10 +162,10 @@ describe('<BuildPage />', () => {
     expect(useCourseStore.getState().currentStage).toBe('export');
   });
 
-  it('shows "Generate All Classes" when no chapters exist, "Generate Remaining" once some exist', () => {
+  it('shows "Draft all chapters" when none exist, "Draft remaining chapters" once some do', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(3) });
     const { unmount } = renderPage();
-    expect(screen.getByRole('button', { name: /generate all classes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /draft all chapters/i })).toBeInTheDocument();
 
     unmount();
     useCourseStore.setState({
@@ -137,14 +173,13 @@ describe('<BuildPage />', () => {
       chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
     });
     renderPage();
-    expect(screen.getByRole('button', { name: /generate remaining classes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /draft remaining chapters/i })).toBeInTheDocument();
   });
 
-  it('shows the "Generate This Class" call-to-action when chapter has research but no content yet', async () => {
+  it('shows the "Draft this chapter" call-to-action when a chapter has research but no content yet', async () => {
     const user = userEvent.setup();
-    // Chapter 1 already generated (blocks the auto-gen effect, which only
-    // targets chapter 1). Chapter 2 has research but no content — that's
-    // the state we want to land on.
+    // Chapter 1 already generated; chapter 2 has research but no content —
+    // that's the state we want to land on.
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
       researchDossiers: [makeDossier(2)],
@@ -153,14 +188,13 @@ describe('<BuildPage />', () => {
     renderPage();
 
     // Click the sidebar entry for chapter 2 to switch to it.
-    const sidebarRow = screen.getByText(/2\. topic 2/i);
-    await user.click(sidebarRow);
+    await user.click(screen.getByRole('button', { name: /topic 2/i }));
 
-    expect(screen.getByText(/class 2: topic 2/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /generate this class/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /view dossier/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /draft this chapter/i })).toBeInTheDocument();
   });
 
-  it('warns the user when the chapter has no research, offering both "Go to Research" and "Generate Anyway"', async () => {
+  it('warns the user when the chapter has no research, offering both "Go to Research" and "Draft anyway"', async () => {
     const user = userEvent.setup();
     useCourseStore.setState({
       syllabus: makeSyllabus(2),
@@ -169,31 +203,32 @@ describe('<BuildPage />', () => {
     });
     renderPage();
 
-    expect(screen.getByText(/no research has been conducted/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /go to research/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /generate anyway/i })).toBeInTheDocument();
+    expect(screen.getByText(/no research yet for this chapter/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /draft anyway/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /go to research/i }));
     expect(navigateMock).toHaveBeenCalledWith('/research');
   });
 
-  it('shows the default tab set (Reading / Practice Quiz / In-Class Quiz / Discussion) for a generated chapter', () => {
+  it('shows the default tab set (Reading / Practice / Quizzes / Discussion) for a generated chapter', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
     });
     renderPage();
 
-    expect(screen.getByRole('button', { name: /^reading$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^practice quiz$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^in-class quiz$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^discussion$/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^reading/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^practice/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^quizzes/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^discussion/i })).toBeInTheDocument();
     // Advanced tabs hidden by default.
-    expect(screen.queryByRole('button', { name: /^weekly challenge$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^audiobook$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^challenge/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^activities/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^audio/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^slides/i })).not.toBeInTheDocument();
   });
 
-  it('reveals the advanced tabs (Weekly Challenge / Activities / Audiobook / Slides) when advancedMode is on', () => {
+  it('reveals the advanced tabs (Challenge / Activities / Audio / Slides) when advancedMode is on', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
@@ -201,64 +236,66 @@ describe('<BuildPage />', () => {
     useApiStore.setState({ advancedMode: true });
     renderPage();
 
-    expect(screen.getByRole('button', { name: /^weekly challenge$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^activities$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^audiobook$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^slides$/i })).toBeInTheDocument();
-    // Infographic still hidden without Gemini key.
-    expect(screen.queryByRole('button', { name: /^infographic$/i })).not.toBeInTheDocument();
-  });
-
-  it('adds the Infographic tab only when both advancedMode and a Gemini key are configured', () => {
-    useCourseStore.setState({
-      syllabus: makeSyllabus(1),
-      chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
-    });
-    useApiStore.setState({ advancedMode: true, geminiApiKey: 'gemini-key' });
-    renderPage();
-
-    expect(screen.getByRole('button', { name: /^infographic$/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^challenge/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^activities/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^audio/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^slides/i })).toBeInTheDocument();
   });
 
   it('prepends the Canvas Module tab when a Canvas template is active', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
-      setup: { ...useCourseStore.getState().setup, templateId: 'tpl-1' },
     });
-    useTemplateStore.setState({
-      templates: [
-        {
-          id: 'tpl-1',
-          parserVersion: 3,
-          name: 'Stats Template',
-          uploadedAt: new Date().toISOString(),
-          fileSizeBytes: 1234,
-          modules: [],
-          images: [],
-          ltiResources: [],
-          courseSettings: {},
-          totalFiles: 5,
-        },
-      ],
-      activeTemplateId: 'tpl-1',
+    activateTemplate();
+    renderPage();
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs[0]).toHaveTextContent(/^canvas module/i);
+    expect(screen.getByRole('button', { name: /generate all canvas modules/i })).toBeInTheDocument();
+  });
+
+  it('does not show the Canvas Module tab without a template', () => {
+    useCourseStore.setState({
+      syllabus: makeSyllabus(1),
+      chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
     });
     renderPage();
 
-    expect(screen.getByRole('button', { name: /^canvas module$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^canvas module/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /canvas modules?/i })).not.toBeInTheDocument();
+  });
+
+  it('generates a Canvas module from the Canvas Module tab and stores it on the chapter', async () => {
+    const user = userEvent.setup();
+    useCourseStore.setState({
+      syllabus: makeSyllabus(1),
+      chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
+    });
+    activateTemplate();
+    useUiStore.setState({ activeTab: 'template-module' });
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: /generate canvas module/i }));
+
+    await waitFor(() => expect(generateTemplateChapter).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(useCourseStore.getState().chapters[0].templateContent?.discussion.title).toBe(
+        'Talk it over',
+      ),
+    );
+    expect(await screen.findByText(/overview body/i)).toBeInTheDocument();
   });
 
   it('renders the chapter sidebar with one entry per chapter in the syllabus', () => {
     useCourseStore.setState({ syllabus: makeSyllabus(4) });
     renderPage();
 
-    // ChapterSidebar renders each chapter as "N. Title" in a single text
-    // node, so we match the full string.
-    expect(screen.getByText(/1\. topic 1/i)).toBeInTheDocument();
-    expect(screen.getByText(/4\. topic 4/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /topic 1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /topic 4/i })).toBeInTheDocument();
   });
 
-  it('shows the ResearchPanel header for a chapter with a research dossier', () => {
+  it('links to the research dossier for a chapter that has one', () => {
     useCourseStore.setState({
       syllabus: makeSyllabus(1),
       researchDossiers: [makeDossier(1)],
@@ -266,8 +303,7 @@ describe('<BuildPage />', () => {
     });
     renderPage();
 
-    // The panel is collapsed by default — only the header row is in the DOM.
-    expect(screen.getByText(/research — 1 source/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /view dossier/i })).toBeInTheDocument();
   });
 
   it('renders a UI error banner from useUiStore.error', () => {
@@ -279,5 +315,76 @@ describe('<BuildPage />', () => {
     renderPage();
 
     expect(screen.getByText(/generation failed for chapter 1/i)).toBeInTheDocument();
+  });
+
+  describe('advanced-mode gating of batch generation', () => {
+    function seedResearched() {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(2),
+        researchDossiers: [makeDossier(1), makeDossier(2)],
+        // Chapter 1 exists so the page's auto-draft-on-mount effect stays idle.
+        chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
+      });
+    }
+
+    it('Canvas-focused mode: the batch dialog offers Canvas materials only', async () => {
+      const user = userEvent.setup();
+      seedResearched();
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /draft remaining chapters/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/build all canvas materials/i);
+      expect(dialog).toHaveTextContent(/reading, quizzes, and discussion/i);
+      expect(dialog).not.toHaveTextContent(/audiobook/i);
+    });
+
+    it('Everything mode: the batch dialog offers the full set', async () => {
+      const user = userEvent.setup();
+      useApiStore.setState({ advancedMode: true });
+      seedResearched();
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: /draft remaining chapters/i }));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent(/build everything/i);
+      expect(dialog).toHaveTextContent(/weekly challenge, discussion, activities, audiobook, slides/i);
+    });
+
+    it('sidebar counts only the visible materials (of 4) in Canvas-focused mode, of 8 in Everything mode', () => {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [makeChapter({ number: 1, title: 'Topic 1' })],
+      });
+      const { unmount } = renderPage();
+      expect(screen.getByText(/1 of 4 drafted/i)).toBeInTheDocument();
+      unmount();
+
+      useApiStore.setState({ advancedMode: true });
+      renderPage();
+      expect(screen.getByText(/1 of 8 drafted/i)).toBeInTheDocument();
+    });
+
+    it('a chapter with all four Canvas materials reads as fully drafted without the advanced ones', () => {
+      useCourseStore.setState({
+        syllabus: makeSyllabus(1),
+        chapters: [
+          makeChapter({
+            number: 1,
+            title: 'Topic 1',
+            practiceQuizData: 'Q',
+            inClassQuizData: [{ question: 'q', correctAnswer: 'a', correctFeedback: 'f', distractors: [] }],
+            discussionData: [{ prompt: 'p', hook: 'h' }],
+          }),
+        ],
+      });
+      renderPage();
+
+      // Fully drafted → the sidebar swaps the "N of M" count for a ready marker.
+      expect(screen.queryByText(/of 8 drafted/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/\d of 4 drafted/i)).not.toBeInTheDocument();
+    });
   });
 });
