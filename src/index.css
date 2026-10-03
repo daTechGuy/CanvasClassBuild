@@ -22,10 +22,10 @@
   --color-cb-text-muted:         #5d574a;
   --color-cb-text-subtle:        #7c7464;
   --color-cb-text-inverse:       #f8f3e6;
-  --color-cb-accent-emphasis:    #6e1f24;
-  --color-cb-accent-emphasis-hv: #842830;
-  --color-cb-accent-emphasis-ac: #56171b;
-  --color-cb-accent-emphasis-quiet: oklch(0.30 0.10 20 / 0.10);
+  --color-cb-accent-emphasis:    #c72a26;
+  --color-cb-accent-emphasis-hv: #a92218;
+  --color-cb-accent-emphasis-ac: #8a1b12;
+  --color-cb-accent-emphasis-quiet: rgba(199,42,38,0.10);
   --color-cb-accent-link:        #1f2e4a;
   --color-cb-accent-link-hv:     #2a4068;
   --color-cb-accent-gilt:        #a8854a;
@@ -65,10 +65,10 @@
   --color-bg-elevated: #252540;
   --color-bg-hover: #2a2a4a;
 
-  --color-violet-400: #a78bfa;
-  --color-violet-500: #8b5cf6;
-  --color-violet-600: #7c3aed;
-  --color-violet-700: #6d28d9;
+  --color-violet-400: #ee6c4d;
+  --color-violet-500: #e13f2a;
+  --color-violet-600: #c72a26;
+  --color-violet-700: #a92218;
 
   --color-amber-400: #fbbf24;
   --color-amber-500: #f59e0b;
@@ -118,10 +118,10 @@
   --cb-border-default: rgba(26,24,20,0.14);
   --cb-border-strong:  rgba(26,24,20,0.35);
   --cb-border-rule:    rgba(26,24,20,0.55);
-  --cb-accent-emphasis:        #6e1f24;
-  --cb-accent-emphasis-hover:  #842830;
-  --cb-accent-emphasis-active: #56171b;
-  --cb-accent-emphasis-quiet:  rgba(110,31,36,0.10);
+  --cb-accent-emphasis:        #c72a26;
+  --cb-accent-emphasis-hover:  #a92218;
+  --cb-accent-emphasis-active: #8a1b12;
+  --cb-accent-emphasis-quiet:  rgba(199,42,38,0.10);
   --cb-accent-link:            #1f2e4a;
   --cb-accent-link-hover:      #2a4068;
   --cb-accent-link-visited:    #4a3a68;
@@ -171,10 +171,10 @@
   --cb-border-default: rgba(235,225,203,0.14);
   --cb-border-strong:  rgba(235,225,203,0.32);
   --cb-border-rule:    rgba(235,225,203,0.55);
-  --cb-accent-emphasis:        #c6924e;
-  --cb-accent-emphasis-hover:  #dba764;
-  --cb-accent-emphasis-active: #a87a3a;
-  --cb-accent-emphasis-quiet:  rgba(198,146,78,0.14);
+  --cb-accent-emphasis:        #ee6c4d;
+  --cb-accent-emphasis-hover:  #f58468;
+  --cb-accent-emphasis-active: #e13f2a;
+  --cb-accent-emphasis-quiet:  rgba(238,108,77,0.14);
   --cb-accent-link:            #9bb4d6;
   --cb-accent-link-hover:      #b3c6e0;
   --cb-accent-link-visited:    #b09cd1;
