@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useCourseStore } from '../../store/courseStore';
-import { useApiStore } from '../../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../../store/apiStore';
 import { docxToText, extractOutlineFields } from '../../services/template/parseOutlineDocx';
 import { Button } from '../shared/Button';
 import { friendlyError } from '../../utils/errors';
@@ -22,17 +22,15 @@ const FIELD_HINTS: Record<keyof OutlineFields, string> = {
 
 export function CourseOutlineUpload() {
   const { outlineFields, outlineRawText, setOutlineFields, setOutlineRawText } = useCourseStore();
-  const { provider, claudeApiKey, ollamaApiKey } = useApiStore();
+  const llm = selectActiveLlm(useApiStore());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const llmKey = provider === 'ollama' ? ollamaApiKey : claudeApiKey;
-
   const handleFile = async (file: File) => {
-    if (!llmKey.trim()) {
-      setError('Add an API key (Claude or Ollama) before uploading — the outline is parsed by the active LLM provider.');
+    if (!llm.hasKey) {
+      setError(`Add your ${llm.label} API key before uploading — the outline is parsed by the active LLM provider.`);
       return;
     }
     setBusy(true);
@@ -40,7 +38,7 @@ export function CourseOutlineUpload() {
     try {
       const rawText = await docxToText(file);
       setOutlineRawText(rawText);
-      const result = await extractOutlineFields({ apiKey: llmKey, rawText });
+      const result = await extractOutlineFields({ apiKey: llm.apiKey, rawText });
       setOutlineFields(result.fields);
       setOpen(true);
     } catch (err) {

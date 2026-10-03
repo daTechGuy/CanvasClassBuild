@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DEFAULT_OLLAMA_MODEL } from '../services/claude/client';
+import { DEFAULT_OLLAMA_MODEL, DEFAULT_GEMINI_MODEL } from '../services/claude/client';
 import type { LlmProvider } from '../services/llm/types';
 import type { ResearchBackend } from '../services/research/types';
 
@@ -13,6 +13,10 @@ interface ApiState {
   claudeApiKey: string;
   ollamaApiKey: string;
   ollamaModel: string;
+  geminiApiKey: string;
+  geminiModel: string;
+  geminiKeyValid: boolean | null;
+  isValidatingGemini: boolean;
   tavilyApiKey: string;
 
   claudeKeyValid: boolean | null;
@@ -35,6 +39,10 @@ interface ApiState {
   setClaudeApiKey: (key: string) => void;
   setOllamaApiKey: (key: string) => void;
   setOllamaModel: (m: string) => void;
+  setGeminiApiKey: (key: string) => void;
+  setGeminiModel: (m: string) => void;
+  setGeminiKeyValid: (valid: boolean | null) => void;
+  setIsValidatingGemini: (v: boolean) => void;
   setTavilyApiKey: (key: string) => void;
   setClaudeKeyValid: (valid: boolean | null) => void;
   setOllamaKeyValid: (valid: boolean | null) => void;
@@ -59,6 +67,10 @@ export const useApiStore = create<ApiState>()(
       claudeApiKey: '',
       ollamaApiKey: '',
       ollamaModel: DEFAULT_OLLAMA_MODEL,
+      geminiApiKey: '',
+      geminiModel: DEFAULT_GEMINI_MODEL,
+      geminiKeyValid: null,
+      isValidatingGemini: false,
       tavilyApiKey: '',
       claudeKeyValid: null,
       ollamaKeyValid: null,
@@ -79,6 +91,11 @@ export const useApiStore = create<ApiState>()(
       setClaudeApiKey: (key) => set({ claudeApiKey: key, claudeKeyValid: null }),
       setOllamaApiKey: (key) => set({ ollamaApiKey: key, ollamaKeyValid: null }),
       setOllamaModel: (m) => set({ ollamaModel: m }),
+      setGeminiApiKey: (key) => set({ geminiApiKey: key, geminiKeyValid: null }),
+      // A different model id invalidates a previous check (the check is per key+model).
+      setGeminiModel: (m) => set({ geminiModel: m, geminiKeyValid: null }),
+      setGeminiKeyValid: (valid) => set({ geminiKeyValid: valid }),
+      setIsValidatingGemini: (v) => set({ isValidatingGemini: v }),
       setTavilyApiKey: (key) => set({ tavilyApiKey: key, tavilyKeyValid: null }),
       setClaudeKeyValid: (valid) => set({ claudeKeyValid: valid }),
       setOllamaKeyValid: (valid) => set({ ollamaKeyValid: valid }),
@@ -96,7 +113,9 @@ export const useApiStore = create<ApiState>()(
     }),
     {
       name: 'classbuild-api-keys',
-      version: 4,
+      // v5: added geminiApiKey/geminiModel. New fields default via the initial state
+      // (persist shallow-merges), so no migration step is needed.
+      version: 5,
       migrate(persisted, version) {
         const state = persisted as Record<string, unknown>;
         // v0/v1 → v2: drop the retired geminiApiKey.
@@ -123,6 +142,8 @@ export const useApiStore = create<ApiState>()(
         claudeApiKey: state.claudeApiKey,
         ollamaApiKey: state.ollamaApiKey,
         ollamaModel: state.ollamaModel,
+        geminiApiKey: state.geminiApiKey,
+        geminiModel: state.geminiModel,
         tavilyApiKey: state.tavilyApiKey,
         openaiApiKey: state.openaiApiKey,
         elevenLabsApiKey: state.elevenLabsApiKey,
@@ -130,3 +151,49 @@ export const useApiStore = create<ApiState>()(
     },
   ),
 );
+
+// ── Active course-content provider ──
+//
+// Many places need "the key that matters right now" (is generation possible? which
+// banner to show?). Gating on `claudeApiKey` alone silently breaks anyone using Ollama
+// or Gemini without a Claude key, so everything asks this instead.
+
+export interface ActiveLlm {
+  provider: LlmProvider;
+  /** Human label for messages: "Anthropic" | "Ollama" | "Gemini". */
+  label: string;
+  apiKey: string;
+  /** true/false after a check, null if not checked yet. */
+  keyValid: boolean | null;
+  /** True when a non-blank key is set for the active provider. */
+  hasKey: boolean;
+}
+
+type LlmKeyState = Pick<
+  ApiState,
+  | 'provider'
+  | 'claudeApiKey'
+  | 'claudeKeyValid'
+  | 'ollamaApiKey'
+  | 'ollamaKeyValid'
+  | 'geminiApiKey'
+  | 'geminiKeyValid'
+>;
+
+export function selectActiveLlm(s: LlmKeyState): ActiveLlm {
+  const pick = (label: string, apiKey: string, keyValid: boolean | null): ActiveLlm => ({
+    provider: s.provider,
+    label,
+    apiKey,
+    keyValid,
+    hasKey: apiKey.trim().length > 0,
+  });
+  switch (s.provider) {
+    case 'ollama':
+      return pick('Ollama', s.ollamaApiKey, s.ollamaKeyValid);
+    case 'gemini':
+      return pick('Gemini', s.geminiApiKey, s.geminiKeyValid);
+    default:
+      return pick('Anthropic', s.claudeApiKey, s.claudeKeyValid);
+  }
+}

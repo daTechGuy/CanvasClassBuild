@@ -12,6 +12,7 @@ npm run build          # tsc -b + vite build  (tsc only type-checks src/, NOT te
 npm run lint           # ESLint over everything (7 known react-hooks/exhaustive-deps warnings, all pre-existing upstream)
 npm test               # vitest (happy-dom). CI runs `test:coverage`
 npm run validate:imscc -- file.imscc   # offline structural check of a Canvas cartridge
+GEMINI_API_KEY=... npm run smoke:gemini # live check of the Gemini backend (key never printed)
 
 # Canvas-importable course from a topic + a Canvas template, headless
 npx tsx scripts/canvas-course.ts --topic "..." --template ./template.imscc --chapters 8 --output ./out
@@ -56,7 +57,7 @@ src/
 ├── types/                      # course.ts (all data interfaces), template.ts, outline.ts, generation.ts
 ├── store/                      # Zustand
 │   ├── courseStore.ts          #   course state (persisted to IndexedDB via idbStorage)
-│   ├── apiStore.ts             #   API keys, provider, research backend, advancedMode (persisted)
+│   ├── apiStore.ts             #   API keys, provider, research backend, advancedMode (persisted); selectActiveLlm()
 │   ├── templateStore.ts        #   uploaded Canvas templates (parsed + raw .imscc blob)
 │   └── uiStore.ts              #   transient UI/generation state, in-flight map
 ├── pages/                      # Landing, Setup, Syllabus, Research, Build, Export, TemplatePreview
@@ -66,7 +67,7 @@ src/
 │   ├── setup/, syllabus/, export/, layout/, shared/
 ├── prompts/                    # prompt builders (syllabus, chapter, quizzes, slides, templateChapter…)
 ├── services/
-│   ├── llm/                    #   provider router: anthropic.ts, ollama.ts, index.ts (the real streaming layer)
+│   ├── llm/                    #   provider router: anthropic.ts, gemini.ts, ollama.ts, index.ts (the real streaming layer)
 │   ├── claude/                 #   SDK client, model ids, thinking budgets; streaming.ts is a thin facade over llm/
 │   ├── research/               #   backends: anthropic (web search), tavily, wikipedia; runResearch() dispatch
 │   ├── academic/               #   Crossref / Semantic Scholar / Unpaywall source enrichment
@@ -85,7 +86,9 @@ tests/                          # vitest; fixtures/ holds real Canvas-made .imsc
 
 - `tsconfig.app.json` has `erasableSyntaxOnly: true` — no parameter properties; use class field declarations. `noUnusedLocals` / `noUnusedParameters` are on — always run `npm run build`.
 - **`tsc -b` only checks `src/`.** Test files are transpiled by vitest but not type-checked; keep them type-correct anyway.
-- **Providers (Claude / Ollama Cloud) go through `src/services/llm/`.** `apiStore.provider` picks the backend. Call sites pass Anthropic model ids (`MODELS.opus` …); `resolveProvider` **ignores any `claude-*` model id on the Ollama path** and uses `apiStore.ollamaModel`. Never forward a Claude model id to Ollama.
+- **Providers (Claude / Gemini / Ollama Cloud) go through `src/services/llm/`.** `apiStore.provider` picks the backend. Call sites pass Anthropic model ids (`MODELS.opus` …) and `claudeApiKey`; `resolveProvider` **ignores any `claude-*` model id on the Gemini/Ollama paths** and swaps in that provider's own key and model. Never forward a Claude model id to another provider.
+- **Never gate on `claudeApiKey`.** "Can we generate?" is `selectActiveLlm(useApiStore()).hasKey` (also `.label` / `.keyValid`). Gating on the Claude key silently blocked Ollama/Gemini users (the syllabus never auto-started). Adding a provider = a backend in `services/llm/`, fields in `apiStore`, a pill + key in the Setup keys dialog, a case in `selectActiveLlm` and `resolveProvider`, CLI flags, and tests.
+- **Gemini** (`services/llm/gemini.ts`) is called directly from the browser — Google answers CORS preflights for the `x-goog-api-key` header, so no proxy (unlike Ollama). Key goes in a header, never the URL. It ignores Anthropic server tools, so "Claude web search" research still needs a Claude key; Tavily/Wikipedia work. Thought summaries are requested only with a thinking budget and retried once without on a 400 that mentions thinking. Model ids change often — the model is a free-text setting. Unit tests mock `fetch`; `npm run smoke:gemini` (key from `GEMINI_API_KEY`) checks the live API.
 - **Opus 4.8** uses adaptive thinking (`thinking: {type:'adaptive'}` + `output_config.effort`); manual `budget_tokens` is rejected on Opus ≥4.7. Sonnet/Haiku still use manual budgets. Pass `signal` for cancellation and don't retry an aborted call.
 - **`advancedMode`** (apiStore) is "Canvas-focused" (Reading / Practice / Quizzes / Discussion) vs "Everything" (+ Challenge / Activities / Audio / Slides). It gates the visible tabs **and** batch / "Generate all" generation **and** the sidebar's N-of-M count — keep them in step.
 - **Don't put an inline `onClose` in an effect dependency list.** `CodexModal` once re-focused the dialog on every keystroke because its effect depended on the caller's inline arrow; it now holds `onClose` in a ref. Same trap anywhere an effect side-effect (focus, scroll) follows a changing callback.

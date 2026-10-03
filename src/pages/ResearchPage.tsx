@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../store/courseStore';
-import { useApiStore } from '../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
 import type { WebSearchResult } from '../services/llm/types';
 import { runResearch } from '../services/research';
@@ -54,11 +54,12 @@ export function ResearchPage() {
     setStage,
     completeStage,
   } = useCourseStore();
-  const { claudeApiKey, ollamaApiKey, tavilyApiKey, provider, researchBackend } = useApiStore();
+  const apiState = useApiStore();
+  const { claudeApiKey, tavilyApiKey, researchBackend } = apiState;
   // Active LLM key — used by the tavily/wikipedia backends for query generation
   // and synthesis. The anthropic backend is always Claude (only Claude exposes
   // the web_search tool).
-  const llmApiKey = provider === 'ollama' ? ollamaApiKey : claudeApiKey;
+  const llmApiKey = selectActiveLlm(apiState).apiKey;
   const { setActiveTab } = useUiStore();
   const [currentChapter, setCurrentChapter] = useState(0);
   const [researchingSet, setResearchingSet] = useState<Set<number>>(new Set());

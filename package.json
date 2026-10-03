@@ -34,7 +34,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "validate:imscc": "tsx tools/validate-imscc.ts"
+    "validate:imscc": "tsx tools/validate-imscc.ts",
+    "smoke:gemini": "tsx tools/smoke-gemini.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

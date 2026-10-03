@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 
-export type LlmProvider = 'anthropic' | 'ollama';
+export type LlmProvider = 'anthropic' | 'ollama' | 'gemini';
 
 export type ThinkingBudget = 'max' | 'high' | 'medium' | 'low';
 
@@ -30,7 +30,7 @@ export interface StreamOptions {
   system?: string;
   messages: Anthropic.MessageParam[];
   thinkingBudget?: ThinkingBudget;
-  // Custom and server-side tools (web_search, etc.). Ollama silently ignores.
+  // Custom and server-side tools (web_search, etc.). Ollama and Gemini silently ignore.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools?: any[];
   maxTokens?: number;
@@ -47,4 +47,8 @@ export interface StreamOptions {
   ollamaApiKey?: string;
   /** Ollama model override. Falls back to apiStore.ollamaModel when omitted. */
   ollamaModel?: string;
+  /** Gemini API key, used only when provider==='gemini' (same Node/CLI rationale as ollamaApiKey). */
+  geminiApiKey?: string;
+  /** Gemini model override. Falls back to apiStore.geminiModel when omitted. */
+  geminiModel?: string;
 }

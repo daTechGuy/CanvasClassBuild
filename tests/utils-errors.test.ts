@@ -84,4 +84,49 @@ describe('friendlyError', () => {
     expect(friendlyError('rate_limit exceeded')).toMatch(/too many requests/i);
     expect(friendlyError({ message: 'opaque' })).toMatch(/something went wrong/i);
   });
+
+  describe('Gemini (Google) error wording', () => {
+    // Real shapes: our GeminiHttpError message is "Gemini <code> <STATUS>: <google's message>".
+    it("maps Google's \"API key not valid\" (a 400, not a 401) to \"API key rejected\"", () => {
+      const err = Object.assign(
+        new Error('Gemini 400 INVALID_ARGUMENT: API key not valid. Please pass a valid API key.'),
+        { status: 400 },
+      );
+      expect(friendlyError(err)).toMatch(/api key rejected/i);
+    });
+
+    it('also catches API_KEY_INVALID and expired keys', () => {
+      expect(friendlyError(new Error('API_KEY_INVALID'))).toMatch(/api key rejected/i);
+      expect(friendlyError(new Error('Gemini 400: API key expired. Please renew the API key.'))).toMatch(/api key rejected/i);
+    });
+
+    it('still reads other 400s as a rejected request (the key rule must not swallow them)', () => {
+      const err = Object.assign(new Error('Gemini 400 INVALID_ARGUMENT: contents is required'), { status: 400 });
+      expect(friendlyError(err)).toMatch(/request was rejected/i);
+    });
+
+    it('maps an unknown / retired model (404) to a model-name hint', () => {
+      const err = Object.assign(
+        new Error('Gemini 404 NOT_FOUND: models/gemini-9 is not found for API version v1beta'),
+        { status: 404 },
+      );
+      expect(friendlyError(err)).toMatch(/model was not found.*model name/i);
+      expect(friendlyError(new Error('models/gemini-9 is not found for API version v1beta'))).toMatch(/model was not found/i);
+    });
+
+    it('maps a response Gemini blocked (RECITATION/BLOCKLIST included) to the softer-wording sentence', () => {
+      expect(friendlyError(new Error('Gemini blocked the response (RECITATION). Reword the topic, or switch…'))).toMatch(/declined to respond/i);
+      expect(friendlyError(new Error('Gemini blocked the response (BLOCKLIST). Reword the topic'))).toMatch(/declined to respond/i);
+    });
+
+    it('maps a 503 UNAVAILABLE to the overloaded sentence and a 403 to access denied', () => {
+      expect(friendlyError(Object.assign(new Error('Gemini 503 UNAVAILABLE: overloaded'), { status: 503 }))).toMatch(/overloaded/i);
+      expect(friendlyError(Object.assign(new Error('Gemini 403 PERMISSION_DENIED: no access'), { status: 403 }))).toMatch(/access denied/i);
+    });
+
+    it('does not misread unrelated "not found" text as a missing model', () => {
+      expect(friendlyError(new Error('file not found in archive'), 'fallback')).toBe('fallback');
+    });
+  });
 });
+
