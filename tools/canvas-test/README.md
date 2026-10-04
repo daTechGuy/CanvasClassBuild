@@ -25,7 +25,7 @@ anything under `src/services/export/` or `src/services/template/`.
 tools/canvas-test/build-demo-cartridge.sh
 
 # 2. import into Canvas and inspect what it built (Canvas on another box → set CCT_SSH)
-export CCT_SSH=canvas@192.168.1.139 CCT_SSH_KEY=~/.ssh/canvas_vm_ed25519
+export CCT_SSH=canvas@<canvas-host> CCT_SSH_KEY=~/.ssh/<your-key>
 tools/canvas-test/cct.sh import output/demo-course-native.imscc "native demo"
 tools/canvas-test/cct.sh import output/demo-template-export.imscc "template demo"
 
@@ -51,7 +51,7 @@ instance details** (LAN address, account UUID/ids in `course_settings/context.xm
 ## Building the Canvas instance
 
 ```bash
-CCT_LAN_HOST=192.168.1.139 tools/canvas-test/setup-canvas.sh        # 30–90 min the first time
+CCT_LAN_HOST=<canvas-host> tools/canvas-test/setup-canvas.sh        # 30–90 min the first time
 ```
 
 Run on Ubuntu 22.04/24.04 with Docker + compose plugin, git, python3, openssl, curl; ~8 GB RAM (add

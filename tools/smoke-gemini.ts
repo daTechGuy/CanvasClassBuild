@@ -112,7 +112,7 @@ await check('unknown model id → a clear "model not found" message', true, asyn
 // Needs no real key: Google must reject it, and we must explain that well.
 await check('bad key → "API key rejected" (against Google\'s real error text)', false, async () => {
   try {
-    await streamMessageGemini({ apiKey: 'AIzaThisIsNotARealKey000000000000000000', model: MODEL, messages: [{ role: 'user', content: 'hi' }] }, {});
+    await streamMessageGemini({ apiKey: 'not-a-real-key', model: MODEL, messages: [{ role: 'user', content: 'hi' }] }, {});
   } catch (e) {
     const raw = (e as Error).message;
     const friendly = friendlyError(e);
