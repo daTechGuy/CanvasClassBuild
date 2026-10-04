@@ -334,5 +334,69 @@ describe('parseImsccTemplate — shape of a real Canvas export', () => {
     expect(ex.discussion!.promptHtml).toContain('Share one surprising idea.');
     expect(ex.discussion!.title).toBe('What surprised you?');
   });
+
+  it('detects Week, Unit, and Chapter prefixes as module patterns', async () => {
+    const zip = new JSZip();
+    zip.file(
+      'course_settings/module_meta.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>
+<modules xmlns="http://canvas.instructure.com/xsd/cccv1p0">
+  <module identifier="m_week">
+    <title>Week 1: Introduction to Biology</title>
+    <workflow_state>active</workflow_state>
+    <position>1</position>
+    <items>
+      <item identifier="i_w1"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Week 1 Overview</title><identifierref>r_w_over</identifierref><position>1</position></item>
+      <item identifier="i_w2"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>W1 Instructor Notes: Cell Structure</title><identifierref>r_w_notes</identifierref><position>2</position></item>
+    </items>
+  </module>
+  <module identifier="m_unit">
+    <title>Unit 2: Molecular Genetics</title>
+    <workflow_state>active</workflow_state>
+    <position>2</position>
+    <items>
+      <item identifier="i_u1"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Unit 2 Overview</title><identifierref>r_u_over</identifierref><position>1</position></item>
+      <item identifier="i_u2"><content_type>DiscussionTopic</content_type><workflow_state>active</workflow_state><title>U2 Discussion: DNA Sequencing</title><identifierref>r_u_disc</identifierref><position>2</position></item>
+    </items>
+  </module>
+  <module identifier="m_chapter">
+    <title>Chapter 3: Ecology</title>
+    <workflow_state>active</workflow_state>
+    <position>3</position>
+    <items>
+      <item identifier="i_c1"><content_type>WikiPage</content_type><workflow_state>active</workflow_state><title>Chapter 3 Overview</title><identifierref>r_c_over</identifierref><position>1</position></item>
+    </items>
+  </module>
+</modules>`,
+    );
+    zip.file(
+      'imsmanifest.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="m" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"><resources>
+  <resource identifier="r_w_over" type="webcontent" href="wiki_content/w_over.html"><file href="wiki_content/w_over.html"/></resource>
+  <resource identifier="r_w_notes" type="webcontent" href="wiki_content/w_notes.html"><file href="wiki_content/w_notes.html"/></resource>
+  <resource identifier="r_u_over" type="webcontent" href="wiki_content/u_over.html"><file href="wiki_content/u_over.html"/></resource>
+  <resource identifier="r_u_disc" type="imsdt_xmlv1p1"><file href="r_u_disc.xml"/></resource>
+  <resource identifier="r_c_over" type="webcontent" href="wiki_content/c_over.html"><file href="wiki_content/c_over.html"/></resource>
+</resources></manifest>`,
+    );
+
+    const t = await parseImsccTemplate({
+      file: await zip.generateAsync({ type: 'uint8array' }),
+      name: 'flexible-prefixes',
+    });
+
+    expect(t.modules[0].titleLockedPrefix).toBe('Week 1:');
+    expect(t.modules[0].titleEditableSuffix).toBe('Introduction to Biology');
+    expect(t.modules[0].classification).toBe('pattern');
+
+    expect(t.modules[1].titleLockedPrefix).toBe('Unit 2:');
+    expect(t.modules[1].titleEditableSuffix).toBe('Molecular Genetics');
+    expect(t.modules[1].classification).toBe('pattern');
+
+    expect(t.modules[2].titleLockedPrefix).toBe('Chapter 3:');
+    expect(t.modules[2].titleEditableSuffix).toBe('Ecology');
+    expect(t.modules[2].classification).toBe('pattern');
+  });
 });
 

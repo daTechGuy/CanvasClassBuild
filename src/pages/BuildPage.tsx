@@ -25,11 +25,11 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCourseStore } from '../store/courseStore';
-import { useApiStore } from '../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useTemplateStore } from '../store/templateStore';
 import { useUiStore } from '../store/uiStore';
 import { streamMessage, streamWithRetry } from '../services/claude/streaming';
-import { MODELS } from '../services/claude/client';
+import { MODELS } from '../services/llm/models';
 import { buildChapterPrompt, buildChapterUserPrompt } from '../prompts/chapter';
 import { buildPracticeQuizPrompt, buildPracticeQuizUserPrompt } from '../prompts/practiceQuiz';
 import { buildDiscussionPrompt, buildDiscussionUserPrompt } from '../prompts/discussion';
@@ -94,7 +94,9 @@ function writeHintSeen(key: string): void {
 export function BuildPage() {
   const navigate = useNavigate();
   const { syllabus, researchDossiers, chapters, addChapter, updateChapter, setSlideImage, updateSlide, setup, setStage, completeStage } = useCourseStore();
-  const { claudeApiKey, openaiApiKey, elevenLabsApiKey, advancedMode } = useApiStore();
+  const apiState = useApiStore();
+  const { claudeApiKey, openaiApiKey, elevenLabsApiKey, advancedMode } = apiState;
+  const llm = selectActiveLlm(apiState);
   const { templates } = useTemplateStore();
   const activeTemplate = setup.templateId ? templates.find((t) => t.id === setup.templateId) : undefined;
   const examplePatternContent = activeTemplate?.examplePatternContent;
@@ -189,6 +191,8 @@ export function BuildPage() {
     syllabusChapter: syllabusChapterEarly,
     selectedChapterNum,
     selectedChapterRef,
+    llmApiKey: llm.apiKey,
+    provider: llm.provider,
     claudeApiKey,
     elevenLabsApiKey,
     setup,
@@ -539,7 +543,8 @@ export function BuildPage() {
       const hasImageGen = !!openaiApiKey;
       const fullText = await streamMessage(
         {
-          apiKey: claudeApiKey,
+          apiKey: llm.apiKey,
+          provider: llm.provider,
           model: MODELS.opus,
           system: buildChapterPrompt(setup.themeId, hasImageGen),
           messages: [{
@@ -584,7 +589,7 @@ export function BuildPage() {
       setChapterDraftingFor(null);
       setThinkingText('');
     }
-  }, [syllabus, claudeApiKey, openaiApiKey, researchDossiers, setup.chapterLength, addChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
+  }, [syllabus, llm.apiKey, llm.provider, openaiApiKey, researchDossiers, setup, addChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
 
   const refineChapter = useCallback(async (feedback: string) => {
     if (!syllabus || !currentChapter || !syllabusChapter) return;
@@ -655,7 +660,8 @@ Teacher feedback: "${feedback}"`;
 
       const fullText = await streamMessage(
         {
-          apiKey: claudeApiKey,
+          apiKey: llm.apiKey,
+          provider: llm.provider,
           model: MODELS.opus,
           system: buildChapterPrompt(setup.themeId, hasImageGen),
           messages: [{ role: 'user', content: refinePrompt }],
@@ -707,7 +713,7 @@ Teacher feedback: "${feedback}"`;
       setChapterDraftingFor(null);
       setThinkingText('');
     }
-  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, claudeApiKey, openaiApiKey, researchDossiers, setup.chapterLength, updateChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
+  }, [syllabus, currentChapter, syllabusChapter, selectedChapterNum, llm.apiKey, llm.provider, openaiApiKey, researchDossiers, setup, refineAutoRegen, updateChapter, setIsGenerating, setStreamingText, appendStreamingText, setError]);
 
   // 7 generators + retryAudio + fleshOutActivity moved to useChapterMaterials hook.
 
@@ -774,6 +780,7 @@ Teacher feedback: "${feedback}"`;
       editedSlidePrompts,
       updateSlide,
       selectedChapterNum,
+      setSlidesData,
     ],
   );
 
@@ -850,6 +857,7 @@ Teacher feedback: "${feedback}"`;
     setSlidesRender,
     setSlideImage,
     setError,
+    setSlidesData,
   ]);
 
   // ── Per-image chapter refine: iframe shim + message listener ─────────
@@ -1033,7 +1041,8 @@ Teacher feedback: "${feedback}"`;
             const hasImageGen = !!openaiApiKey;
             const fullText = await streamMessage(
               {
-                apiKey: claudeApiKey,
+                apiKey: llm.apiKey,
+                provider: llm.provider,
                 model: MODELS.opus,
                 system: buildChapterPrompt(setup.themeId, hasImageGen),
                 signal,
@@ -1078,7 +1087,7 @@ Teacher feedback: "${feedback}"`;
           try {
             const quizText = await streamMessage(
               {
-                apiKey: claudeApiKey,
+                apiKey: llm.apiKey,
                 model: MODELS.opus,
                 system: buildPracticeQuizPrompt(),
                 signal,
@@ -1092,7 +1101,7 @@ Teacher feedback: "${feedback}"`;
               {}
             );
             const { balancePracticeQuiz } = await import('../services/quiz/answerBalancer');
-            const balancedQuiz = await balancePracticeQuiz(quizText, claudeApiKey);
+            const balancedQuiz = await balancePracticeQuiz(quizText, llm.apiKey);
             updateChapter(ch.number, { practiceQuizData: balancedQuiz });
           } catch (err) {
             if (isAbortError(err) || signal.aborted) break;
@@ -1108,7 +1117,7 @@ Teacher feedback: "${feedback}"`;
           try {
             const inClassText = await streamMessage(
               {
-                apiKey: claudeApiKey,
+                apiKey: llm.apiKey,
                 model: MODELS.opus,
                 system: buildInClassQuizPrompt(),
                 signal,
@@ -1124,7 +1133,7 @@ Teacher feedback: "${feedback}"`;
             try {
               const parsed = parseJson(inClassText) as InClassQuizQuestion[];
               const { balanceInClassQuiz } = await import('../services/quiz/answerBalancer');
-              const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
+              const balanced = await balanceInClassQuiz(parsed, llm.apiKey);
               if (balanced) updateChapter(ch.number, { inClassQuizData: balanced });
             } catch {
               failures.push({ chapter: ch.number, material: 'In-class quiz', message: 'The model returned unparseable quiz data — a retry usually fixes this.' });
@@ -1149,7 +1158,7 @@ Teacher feedback: "${feedback}"`;
             const { buildWeeklyChallengePrompt, buildWeeklyChallengeUserPrompt } = await import('../prompts/weeklyChallenge');
             const challengeText = await streamMessage(
               {
-                apiKey: claudeApiKey,
+                apiKey: llm.apiKey,
                 model: MODELS.opus,
                 system: buildWeeklyChallengePrompt(),
                 signal,
@@ -1188,7 +1197,7 @@ Teacher feedback: "${feedback}"`;
               try {
                 const fullText = await streamWithRetry(
                   {
-                    apiKey: claudeApiKey,
+                    apiKey: llm.apiKey,
                     system: buildDiscussionPrompt(),
                     signal,
                     messages: [{
@@ -1214,7 +1223,7 @@ Teacher feedback: "${feedback}"`;
               try {
                 const fullText = await streamWithRetry(
                   {
-                    apiKey: claudeApiKey,
+                    apiKey: llm.apiKey,
                     system: buildActivitiesPrompt(),
                     signal,
                     messages: [{
@@ -1240,7 +1249,7 @@ Teacher feedback: "${feedback}"`;
               try {
                 const transcript = await streamWithRetry(
                   {
-                    apiKey: claudeApiKey,
+                    apiKey: llm.apiKey,
                     system: buildAudioTranscriptPrompt(),
                     signal,
                     messages: [{
@@ -1279,7 +1288,7 @@ Teacher feedback: "${feedback}"`;
               try {
                 const fullText = await streamWithRetry(
                   {
-                    apiKey: claudeApiKey,
+                    apiKey: llm.apiKey,
                     system: buildSlidesPrompt(setup.themeId),
                     signal,
                     messages: [{
@@ -1323,7 +1332,7 @@ Teacher feedback: "${feedback}"`;
       setBatchMaterial(null);
       setBatchGenerating(false);
     }
-  }, [advancedMode, syllabus, claudeApiKey, openaiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, setBatchSummary]);
+  }, [advancedMode, syllabus, llm.apiKey, llm.provider, openaiApiKey, elevenLabsApiKey, researchDossiers, setup, addChapter, updateChapter, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial, setBatchProgress, pushBatchChapterMs, resetBatchChapterMs, setBatchSummary]);
 
   const generateAllClasses = useCallback(() => runBatch('classes'), [runBatch]);
   const generateEverything = useCallback(() => runBatch('everything'), [runBatch]);
@@ -1340,7 +1349,8 @@ Teacher feedback: "${feedback}"`;
     try {
       const { generateTemplateChapter } = await import('../services/template/generateChapter');
       const { content } = await generateTemplateChapter({
-        apiKey: claudeApiKey,
+        apiKey: llm.apiKey,
+        provider: llm.provider,
         setup,
         chapter: syllabusChapter,
         courseTitle: syllabus.courseTitle,
@@ -1362,7 +1372,7 @@ Teacher feedback: "${feedback}"`;
       endAbortable(abortKey, controller);
       setGeneratingTemplateContent(null);
     }
-  }, [syllabus, syllabusChapter, selectedChapterNum, claudeApiKey, setup, examplePatternContent, addChapter, updateChapter, setTabError, clearTabError]);
+  }, [syllabus, syllabusChapter, selectedChapterNum, llm.apiKey, llm.provider, setup, examplePatternContent, addChapter, updateChapter, setTabError, clearTabError]);
 
   const generateAllCanvasModules = useCallback(async () => {
     if (!syllabus) return;
@@ -1385,7 +1395,8 @@ Teacher feedback: "${feedback}"`;
         setBatchPhase('thinking');
         try {
           const { content } = await generateTemplateChapter({
-            apiKey: claudeApiKey,
+            apiKey: llm.apiKey,
+            provider: llm.provider,
             setup,
             chapter: ch,
             courseTitle: syllabus.courseTitle,
@@ -1417,7 +1428,7 @@ Teacher feedback: "${feedback}"`;
       setBatchMaterial(null);
       setBatchGenerating(false);
     }
-  }, [syllabus, claudeApiKey, setup, examplePatternContent, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
+  }, [syllabus, llm.apiKey, llm.provider, setup, examplePatternContent, addChapter, updateChapter, setError, setBatchGenerating, setBatchCurrentChapter, setBatchPhase, setBatchMaterial]);
 
   const templateContent = currentChapter?.templateContent;
 
@@ -1656,7 +1667,8 @@ Teacher feedback: "${feedback}"`;
                 size="sm"
                 variant="secondary"
                 onClick={generateAllCanvasModules}
-                disabled={anyBusy}
+                disabled={anyBusy || !llm.hasKey}
+                title={!llm.hasKey ? `Add a ${llm.label} API key in Setup to generate.` : undefined}
               >
                 {missing === syllabus.chapters.length
                   ? 'Generate all Canvas modules'
@@ -2079,7 +2091,7 @@ Teacher feedback: "${feedback}"`;
                         maxWidth: '72ch',
                       }}
                     >
-                      Research is in. Drafting a chapter takes several minutes — Claude
+                      Research is in. Drafting a chapter takes several minutes — {llm.label}{' '}
                       reasons through the dossier, writes the prose, and weaves in
                       citations. Settle in or grab a coffee; we'll keep going in the
                       background if you click away.
@@ -2333,7 +2345,7 @@ Teacher feedback: "${feedback}"`;
                       chapterNum={selectedChapterNum}
                       content={templateContent}
                       isGenerating={generatingTemplateContent === selectedChapterNum}
-                      canGenerate={!!syllabusChapter && generatingTemplateContent === null}
+                      canGenerate={!!syllabusChapter && generatingTemplateContent === null && llm.hasKey}
                       onGenerate={generateTemplateContent}
                       onStop={() => abortInFlight(materialAbortKey('template-module', selectedChapterNum))}
                     />

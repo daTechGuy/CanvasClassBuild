@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { MotionConfig } from 'framer-motion';
 import { AppShell } from './components/layout/AppShell';
-import { LandingPage } from './pages/LandingPage';
-import { SetupPage } from './pages/SetupPage';
-import { SyllabusPage } from './pages/SyllabusPage';
-import { ResearchPage } from './pages/ResearchPage';
-import { BuildPage } from './pages/BuildPage';
-import { ExportPage } from './pages/ExportPage';
-import { TemplatePreviewPage } from './pages/TemplatePreviewPage';
 import { useCourseStore } from './store/courseStore';
+
+const LandingPage = lazy(() => import('./pages/LandingPage').then((m) => ({ default: m.LandingPage })));
+const SetupPage = lazy(() => import('./pages/SetupPage').then((m) => ({ default: m.SetupPage })));
+const SyllabusPage = lazy(() => import('./pages/SyllabusPage').then((m) => ({ default: m.SyllabusPage })));
+const ResearchPage = lazy(() => import('./pages/ResearchPage').then((m) => ({ default: m.ResearchPage })));
+const BuildPage = lazy(() => import('./pages/BuildPage').then((m) => ({ default: m.BuildPage })));
+const ExportPage = lazy(() => import('./pages/ExportPage').then((m) => ({ default: m.ExportPage })));
+const TemplatePreviewPage = lazy(() => import('./pages/TemplatePreviewPage').then((m) => ({ default: m.TemplatePreviewPage })));
 
 function App() {
   const [hydrated, setHydrated] = useState(useCourseStore.persist.hasHydrated());

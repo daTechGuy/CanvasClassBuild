@@ -11,7 +11,7 @@ import { TemplateTitleEditor } from '../components/syllabus/TemplateTitleEditor'
 import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
 import { streamMessage } from '../services/claude/streaming';
-import { MODELS } from '../services/claude/client';
+import { MODELS } from '../services/llm/models';
 import {
   buildSyllabusPrompt,
   parseSyllabusResponse,
@@ -44,7 +44,6 @@ export function SyllabusPage() {
     resetDownstream,
   } = useCourseStore();
   const apiState = useApiStore();
-  const { claudeApiKey } = apiState;
   const llm = selectActiveLlm(apiState);
   const { isGenerating, setIsGenerating, error, setError } = useUiStore();
 
@@ -94,7 +93,7 @@ export function SyllabusPage() {
 
         const fullText = await streamMessage(
           {
-            apiKey: claudeApiKey,
+            apiKey: llm.apiKey,
             model: MODELS.opus,
             system: systemPrompt,
             messages,
@@ -141,7 +140,7 @@ export function SyllabusPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setup, claudeApiKey, syllabusConversation],
+    [setup, llm.apiKey, llm.provider, syllabusConversation],
   );
 
   useEffect(() => {

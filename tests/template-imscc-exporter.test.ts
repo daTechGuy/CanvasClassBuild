@@ -445,4 +445,16 @@ describe('assembleTemplateImscc — fidelity to a real Canvas-shaped template', 
     expect(bodies.some((b) => b.includes('NEW OVERVIEW'))).toBe(true);
     expect(bodies.some((b) => b.includes('OLD'))).toBe(false);
   });
+
+  it('generates deterministic Canvas identifiers across repeated exports', async () => {
+    const zip1 = await run();
+    const zip2 = await run();
+    const manifest1 = await zip1.file('imsmanifest.xml')!.async('string');
+    const manifest2 = await zip2.file('imsmanifest.xml')!.async('string');
+    expect(manifest1).toBe(manifest2);
+
+    const meta1 = await zip1.file('course_settings/module_meta.xml')!.async('string');
+    const meta2 = await zip2.file('course_settings/module_meta.xml')!.async('string');
+    expect(meta1).toBe(meta2);
+  });
 });

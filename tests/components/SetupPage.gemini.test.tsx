@@ -6,7 +6,7 @@ import { SetupPage } from '../../src/pages/SetupPage';
 import { useCourseStore } from '../../src/store/courseStore';
 import { useApiStore } from '../../src/store/apiStore';
 import { useUiStore } from '../../src/store/uiStore';
-import { DEFAULT_GEMINI_MODEL } from '../../src/services/claude/client';
+import { DEFAULT_GEMINI_MODEL } from '../../src/services/llm/models';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async () => {

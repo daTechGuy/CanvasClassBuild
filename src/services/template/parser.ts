@@ -21,12 +21,12 @@ import type JSZip from 'jszip';
 //    shows "(awaiting topic)" until filled.
 
 const ITEM_PREFIX_PATTERNS: Array<{ capture: RegExp; hasEditableSuffix: boolean }> = [
-  { capture: /^(M\d+\s+Instructor\s+Notes:)\s*(.*)$/i, hasEditableSuffix: true },
-  { capture: /^(M\d+\s+Discussion:)\s*(.*)$/i, hasEditableSuffix: true },
-  { capture: /^(Module\s+\d+\s+Overview)$/i, hasEditableSuffix: false },
+  { capture: /^((?:M|W|U|C|S)\d+\s+Instructor\s+Notes:)\s*(.*)$/i, hasEditableSuffix: true },
+  { capture: /^((?:M|W|U|C|S)\d+\s+Discussion:)\s*(.*)$/i, hasEditableSuffix: true },
+  { capture: /^((?:Module|Week|Unit|Chapter|Session)\s+\d+\s+Overview)$/i, hasEditableSuffix: false },
 ];
 
-const MODULE_PREFIX_PATTERN = /^(Module\s+\d+:)\s*(.*)$/i;
+const MODULE_PREFIX_PATTERN = /^((?:Module|Week|Unit|Chapter|Session)\s+\d+:)\s*(.*)$/i;
 
 const EDIT_MARKER_PATTERN = /\*\*\s*(EDIT(?:\s+OR\s+REMOVE)?)\s*\*\*/i;
 

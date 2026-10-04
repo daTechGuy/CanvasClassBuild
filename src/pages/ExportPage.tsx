@@ -4,7 +4,7 @@ import { useCourseStore } from '../store/courseStore';
 import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
 import { streamMessage } from '../services/claude/streaming';
-import { MODELS } from '../services/claude/client';
+import { MODELS } from '../services/llm/models';
 import { buildChapterPrompt, buildChapterUserPrompt } from '../prompts/chapter';
 import { buildPracticeQuizPrompt, buildPracticeQuizUserPrompt } from '../prompts/practiceQuiz';
 import { buildInClassQuizPrompt, buildInClassQuizUserPrompt } from '../prompts/inClassQuiz';
@@ -90,7 +90,7 @@ export function ExportPage() {
   const { syllabus, chapters, researchDossiers, addChapter, updateChapter, setSlideImage, setup, updateSetup, curriculumMap, setCurriculumMap, outlineFields } = useCourseStore();
   const currentThemeId = (setup.themeId as ChapterThemeId | undefined) ?? DEFAULT_CHAPTER_THEME_ID;
   const apiState = useApiStore();
-  const { claudeApiKey, openaiApiKey } = apiState;
+  const { openaiApiKey } = apiState;
   const llm = selectActiveLlm(apiState);
   const { isGenerating, setIsGenerating, setError, error } = useUiStore();
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
@@ -123,7 +123,7 @@ export function ExportPage() {
     } catch {
       downloadFile(chapter.practiceQuizData, `quiz-${chapterNum}-${sanitizeFilename(chapter.title)}.txt`, 'text/plain');
     }
-  }, [chapters, syllabus]);
+  }, [chapters, syllabus, setup.themeId]);
 
   const handleDownloadSlides = useCallback(async (chapterNum: number) => {
     const chapter = chapters.find(c => c.number === chapterNum);
@@ -534,7 +534,8 @@ export function ExportPage() {
     try {
       const text = await streamMessage(
         {
-          apiKey: claudeApiKey,
+          apiKey: llm.apiKey,
+          provider: llm.provider,
           model: MODELS.haiku,
           system: buildLearningObjectivesPrompt(),
           messages: [
@@ -565,7 +566,8 @@ export function ExportPage() {
     }
   }, [
     syllabus,
-    claudeApiKey,
+    llm.apiKey,
+    llm.provider,
     llm.hasKey,
     isGeneratingOutcomes,
     currentSyllabusHash,
@@ -592,7 +594,8 @@ export function ExportPage() {
       // Generate chapter
       const fullText = await streamMessage(
         {
-          apiKey: claudeApiKey,
+          apiKey: llm.apiKey,
+          provider: llm.provider,
           model: MODELS.opus,
           system: buildChapterPrompt(setup.themeId),
           messages: [{ role: 'user', content: buildChapterUserPrompt(syllabus.courseTitle, ch, setup.chapterLength, { educationLevel: setup.educationLevel, priorKnowledge: setup.priorKnowledge, learnerNotes: setup.learnerNotes }, researchSources) }],
@@ -609,7 +612,8 @@ export function ExportPage() {
       try {
         const quizText = await streamMessage(
           {
-            apiKey: claudeApiKey,
+            apiKey: llm.apiKey,
+            provider: llm.provider,
             model: MODELS.opus,
             system: buildPracticeQuizPrompt(),
             messages: [{ role: 'user', content: buildPracticeQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)) }],
@@ -625,7 +629,8 @@ export function ExportPage() {
       try {
         const inClassText = await streamMessage(
           {
-            apiKey: claudeApiKey,
+            apiKey: llm.apiKey,
+            provider: llm.provider,
             model: MODELS.opus,
             system: buildInClassQuizPrompt(),
             messages: [{ role: 'user', content: buildInClassQuizUserPrompt(ch.title, ch.narrative, ch.keyConcepts, html.slice(0, 3000)) }],
@@ -669,7 +674,7 @@ export function ExportPage() {
       setIsGenerating(false);
       setGeneratingChapter(null);
     }
-  }, [syllabus, chapters, claudeApiKey, researchDossiers, setup.chapterLength, addChapter, updateChapter, isGenerating, setIsGenerating, setError]);
+  }, [syllabus, llm.apiKey, llm.provider, researchDossiers, setup.chapterLength, setup.educationLevel, setup.learnerNotes, setup.priorKnowledge, setup.themeId, addChapter, updateChapter, isGenerating, setIsGenerating, setError]);
 
   // --- Per-class bundle ---
   //
@@ -1014,7 +1019,7 @@ export function ExportPage() {
 
     const blob = await zip.generateAsync({ type: 'blob' });
     saveAs(blob, `${courseName}.zip`);
-  }, [syllabus, chapters, setup.themeId, buildCurriculumMapCsv, curriculumMap]);
+  }, [syllabus, chapters, setup.themeId, buildCurriculumMapCsv, curriculumMap, openaiApiKey, setSlideImage]);
 
   const handlePublish = useCallback(async () => {
     if (!syllabus || chapters.length === 0) return;
@@ -1410,6 +1415,7 @@ export function ExportPage() {
           onDownloadHtml={handleDownloadOutcomesHtml}
           onDownloadCsv={handleDownloadOutcomesCsv}
           canGenerate={llm.hasKey && !isGenerating}
+          llmLabel={llm.label}
         />
 
         <div className="cb-folio">— 05 —</div>
@@ -1697,6 +1703,7 @@ function LearningOutcomesPanel(props: {
   error: string | null;
   stale: boolean;
   canGenerate: boolean;
+  llmLabel?: string;
   onGenerate: () => void;
   onDownloadHtml: () => void;
   onDownloadCsv: () => void;
@@ -1710,6 +1717,7 @@ function LearningOutcomesPanel(props: {
     error,
     stale,
     canGenerate,
+    llmLabel,
     onGenerate,
     onDownloadHtml,
     onDownloadCsv,
@@ -1803,7 +1811,7 @@ function LearningOutcomesPanel(props: {
                 variant={stale ? 'primary' : 'ghost'}
                 onClick={onGenerate}
                 disabled={!canGenerate}
-                title={!canGenerate ? 'Add a Claude API key to regenerate.' : undefined}
+                title={!canGenerate ? `Add a ${llmLabel ?? 'Claude'} API key to regenerate.` : undefined}
               >
                 {stale ? 'Regenerate ↻' : 'Regenerate'}
               </Button>
@@ -1815,7 +1823,7 @@ function LearningOutcomesPanel(props: {
               variant="primary"
               onClick={onGenerate}
               disabled={!canGenerate}
-              title={!canGenerate ? 'Add a Claude API key in Setup to generate.' : undefined}
+              title={!canGenerate ? `Add a ${llmLabel ?? 'Claude'} API key in Setup to generate.` : undefined}
             >
               Generate learning outcomes →
             </Button>

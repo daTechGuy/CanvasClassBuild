@@ -7,7 +7,7 @@ interface TemplateTitleEditorProps {
   setSyllabus: (s: Syllabus) => void;
 }
 
-const MODULE_PREFIX_RE = /^(Module\s+\d+:)\s*(.*)$/i;
+const MODULE_PREFIX_RE = /^((?:Module|Week|Unit|Chapter|Session)\s+\d+:)\s*(.*)$/i;
 
 interface ParsedTitle {
   index: number;

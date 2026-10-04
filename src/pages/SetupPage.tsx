@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../store/courseStore';
 import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
-import { MODELS, DEFAULT_GEMINI_MODEL } from '../services/claude/client';
+import { MODELS, DEFAULT_GEMINI_MODEL } from '../services/llm/models';
 import { TemplatePicker } from '../components/setup/TemplatePicker';
 import { CourseOutlineUpload } from '../components/setup/CourseOutlineUpload';
 import { STAGES } from '../types/course';

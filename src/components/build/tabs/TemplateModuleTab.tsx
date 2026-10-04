@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { ArtifactShell } from '../ArtifactShell';
 import { ArtifactStatusLine, ArtifactEmpty } from '../artifactHelpers';
 import { CodexButton } from '../../codex';
@@ -96,7 +97,7 @@ export function TemplateModuleTab({
           </div>
           <div
             style={{ ...cardStyle, ...proseStyle }}
-            dangerouslySetInnerHTML={{ __html: content.moduleOverviewHtml }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content.moduleOverviewHtml) }}
           />
         </section>
 
@@ -115,7 +116,7 @@ export function TemplateModuleTab({
                 </summary>
                 <div
                   style={{ ...proseStyle, marginTop: 12 }}
-                  dangerouslySetInnerHTML={{ __html: note.htmlContent }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(note.htmlContent) }}
                 />
               </details>
             ))}
@@ -135,7 +136,7 @@ export function TemplateModuleTab({
             </p>
             <div
               style={proseStyle}
-              dangerouslySetInnerHTML={{ __html: content.discussion.promptHtml }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content.discussion.promptHtml) }}
             />
           </div>
         </section>

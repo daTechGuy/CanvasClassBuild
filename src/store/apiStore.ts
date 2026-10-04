@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DEFAULT_OLLAMA_MODEL, DEFAULT_GEMINI_MODEL } from '../services/claude/client';
+import { DEFAULT_OLLAMA_MODEL, DEFAULT_GEMINI_MODEL } from '../services/llm/models';
 import type { LlmProvider } from '../services/llm/types';
 import type { ResearchBackend } from '../services/research/types';
 

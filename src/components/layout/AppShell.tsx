@@ -1,9 +1,46 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { StageIndicator } from './StageIndicator';
 import { ErrorBoundary } from '../shared/ErrorBoundary';
 import { useUiStore } from '../../store/uiStore';
+
+function PageFallback() {
+  return (
+    <div
+      style={{
+        minHeight: '40vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'var(--font-cb-serif)',
+      }}
+    >
+      <div
+        className="cb-italic"
+        style={{
+          fontSize: 15,
+          color: 'var(--cb-text-muted)',
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 10,
+        }}
+      >
+        <span
+          className="cb-sc cb-mono"
+          style={{
+            fontSize: 12,
+            letterSpacing: '0.14em',
+            color: 'var(--cb-accent-emphasis)',
+          }}
+        >
+          cb · loading
+        </span>
+        <span>loading view…</span>
+      </div>
+    </div>
+  );
+}
 
 export function AppShell() {
   const location = useLocation();
@@ -30,7 +67,9 @@ export function AppShell() {
         {!isLanding && <StageIndicator />}
         <div className="max-w-7xl mx-auto px-6 pb-12">
           <ErrorBoundary key={location.pathname}>
-            <Outlet />
+            <Suspense fallback={<PageFallback />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </div>
       </main>

@@ -4,5 +4,5 @@ export { fetchCrossrefWork, normalizeDoi } from './crossref';
 export type { CrossrefWork } from './crossref';
 export { findOpenAccess } from './unpaywall';
 export type { UnpaywallHit } from './unpaywall';
-export { enrichDossier } from './enrich';
+export { enrichDossier, titlesMatch, normalizeTitle } from './enrich';
 export type { EnrichmentStats, EnrichOptions } from './enrich';

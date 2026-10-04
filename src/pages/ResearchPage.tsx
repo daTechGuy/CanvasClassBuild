@@ -304,8 +304,8 @@ export function ResearchPage() {
       researchBackend === 'anthropic'
         ? 'The Claude web-search backend needs an Anthropic API key.'
         : researchBackend === 'tavily'
-          ? 'The Tavily backend needs both a Tavily key and an LLM key (Claude or Ollama) for query generation and synthesis.'
-          : 'The Wikipedia backend needs an LLM key (Claude or Ollama) for query generation and synthesis.';
+          ? 'The Tavily backend needs both a Tavily key and an LLM key (Claude, Gemini, or Ollama) for query generation and synthesis.'
+          : 'The Wikipedia backend needs an LLM key (Claude, Gemini, or Ollama) for query generation and synthesis.';
     return (
       <div
         style={{

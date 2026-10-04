@@ -118,7 +118,7 @@ function weeklyToMcqs(d: WeeklyChallengeData): ParsedMcq[] {
 // makes re-imports into an existing Canvas course match up instead of
 // duplicating).
 
-function hash128(seed: string): string {
+export function hash128(seed: string): string {
   let h1 = 0xdeadbeef ^ seed.length;
   let h2 = 0x41c6ce57 ^ seed.length;
   let h3 = 0x9e3779b9;
@@ -137,7 +137,7 @@ function hash128(seed: string): string {
   return [h1, h2, h3, h4].map((n) => (n >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-function gid(seed: string): string {
+export function gid(seed: string): string {
   return `g${hash128(seed)}`;
 }
 

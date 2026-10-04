@@ -22,6 +22,7 @@ import { parseJson } from '../../utils/format';
 import { normalizeActivityDetail } from '../../utils/activityDetail';
 import { persistableAudioDataUri } from '../../utils/audio';
 import { getVoiceOption } from '../../themes';
+import type { LlmProvider } from '../../services/llm/types';
 import type {
   Syllabus,
   ChapterSyllabus,
@@ -73,7 +74,12 @@ export interface UseChapterMaterialsParams {
   /** Ref to the live selectedChapterNum so async completions can verify the
    *  user hasn't switched to a different chapter before committing local state. */
   selectedChapterRef: React.RefObject<number>;
-  claudeApiKey: string;
+  /** Active LLM provider key (used by practice quizzes, discussions, activities, etc.). */
+  llmApiKey?: string;
+  /** Active LLM provider ('anthropic' | 'gemini' | 'ollama'). */
+  provider?: LlmProvider;
+  /** Legacy alias for Anthropic key. */
+  claudeApiKey?: string;
   elevenLabsApiKey: string;
   setup: CourseSetup;
   updateChapter: (num: number, updates: Partial<GeneratedChapter>) => void;
@@ -199,6 +205,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
+    llmApiKey,
+    provider,
     claudeApiKey,
     elevenLabsApiKey,
     setup,
@@ -212,6 +220,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     setGeneratingAudio,
     setGeneratingSlides,
   } = params;
+
+  const activeLlmKey = llmApiKey ?? claudeApiKey ?? '';
 
   // ── State ──────────────────────────────────────────────────────────
   const [quizHtml, setQuizHtml] = useState('');
@@ -326,7 +336,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       run: async (signal) => {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             model: MODELS.opus,
             system: buildPracticeQuizPrompt(),
             signal,
@@ -348,7 +359,7 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
         );
 
         const { balancePracticeQuiz } = await import('../../services/quiz/answerBalancer');
-        const balancedText = await balancePracticeQuiz(fullText, claudeApiKey);
+        const balancedText = await balancePracticeQuiz(fullText, activeLlmKey);
         updateChapter(chapterNum, { practiceQuizData: balancedText });
 
         if (selectedChapterRef.current === chapterNum) {
@@ -378,7 +389,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     setup.themeId,
     updateChapter,
     setGeneratingQuiz,
@@ -399,7 +411,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       run: async (signal) => {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             model: MODELS.opus,
             system: buildInClassQuizPrompt(),
             signal,
@@ -423,7 +436,7 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
         try {
           const parsed = parseJson(fullText) as InClassQuizQuestion[];
           const { balanceInClassQuiz } = await import('../../services/quiz/answerBalancer');
-          const balanced = await balanceInClassQuiz(parsed, claudeApiKey);
+          const balanced = await balanceInClassQuiz(parsed, activeLlmKey);
           if (selectedChapterRef.current === chapterNum) setInClassQuizData(balanced);
           updateChapter(chapterNum, { inClassQuizData: balanced });
         } catch {
@@ -437,7 +450,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     updateChapter,
     setGeneratingInClassQuiz,
     setTabError,
@@ -466,7 +480,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
 
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             model: MODELS.opus,
             system: buildWeeklyChallengePrompt(),
             signal,
@@ -525,7 +540,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     setup.themeId,
     updateChapter,
     setGeneratingWeeklyChallenge,
@@ -546,7 +562,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       run: async (signal) => {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             system: buildDiscussionPrompt(),
             signal,
             messages: [
@@ -580,7 +597,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     setup.cohortSize,
     setup.teachingEnvironment,
     updateChapter,
@@ -602,7 +620,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       run: async (signal) => {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             system: buildActivitiesPrompt(),
             signal,
             messages: [
@@ -637,7 +656,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     setup.cohortSize,
     setup.teachingEnvironment,
     setup.environmentNotes,
@@ -657,7 +677,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       try {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             model: MODELS.haiku,
             system: buildActivityDetailPrompt(),
             messages: [
@@ -705,7 +726,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     [
       activities,
       syllabusChapter,
-      claudeApiKey,
+      activeLlmKey,
+      provider,
       setup.cohortSize,
       setup.teachingEnvironment,
       setup.environmentNotes,
@@ -732,7 +754,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
         try {
           const transcript = await streamWithRetry(
             {
-              apiKey: claudeApiKey,
+              apiKey: activeLlmKey,
+              provider,
               system: buildAudioTranscriptPrompt(),
               signal,
               messages: [
@@ -791,7 +814,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabus,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     elevenLabsApiKey,
     setup.voiceId,
     updateChapter,
@@ -856,7 +880,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
       run: async (signal) => {
         const fullText = await streamWithRetry(
           {
-            apiKey: claudeApiKey,
+            apiKey: activeLlmKey,
+            provider,
             system: buildSlidesPrompt(setup.themeId),
             signal,
             messages: [
@@ -890,7 +915,8 @@ export function useChapterMaterials(params: UseChapterMaterialsParams): UseChapt
     syllabusChapter,
     selectedChapterNum,
     selectedChapterRef,
-    claudeApiKey,
+    activeLlmKey,
+    provider,
     setup.themeId,
     updateChapter,
     setGeneratingSlides,

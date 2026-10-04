@@ -32,7 +32,7 @@ export interface EnrichOptions {
   onProgress?: (done: number, total: number) => void;
 }
 
-function normalizeTitle(s: string): string {
+export function normalizeTitle(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
@@ -40,7 +40,7 @@ function normalizeTitle(s: string): string {
     .trim();
 }
 
-function titlesMatch(a: string, b: string): boolean {
+export function titlesMatch(a: string, b: string): boolean {
   const A = normalizeTitle(a);
   const B = normalizeTitle(b);
   if (!A || !B) return false;

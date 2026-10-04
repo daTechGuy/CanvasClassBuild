@@ -7,6 +7,7 @@ import type {
 } from '../../types/template';
 import type { OutlineFields } from '../../types/outline';
 import type { TemplateFileInput } from './parser';
+import { gid } from '../export/imsccExporter';
 
 // ── Helpers ──
 
@@ -17,15 +18,6 @@ function escXml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-}
-
-function genCanvasId(): string {
-  // Canvas-style identifier: "g" + 32 hex chars (mirrors what Canvas's exporter
-  // emits). Generated from crypto.randomUUID() then dashes stripped.
-  const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`).replace(/-/g, '');
-  return `g${uuid.slice(0, 32).padEnd(32, '0')}`;
 }
 
 function slug(s: string, max = 60): string {
@@ -210,11 +202,12 @@ void QTI_RESOURCE_TYPE;
 function emitChapterModule(
   position: number,
   chapter: GeneratedChapter,
+  courseSeed = 'course',
 ): ChapterEmissionResult | null {
   const tc = chapter.templateContent;
   if (!tc) return null;
 
-  const moduleId = genCanvasId();
+  const moduleId = gid(`${courseSeed}:template-mod:${chapter.number}`);
   const items: NewItem[] = [];
   const resources: NewResource[] = [];
   const files: Record<string, string> = {};
@@ -223,7 +216,7 @@ function emitChapterModule(
 
   // 1. Sub-header: "Review the module overview:"
   items.push({
-    identifier: genCanvasId(),
+    identifier: gid(`${moduleId}:subhdr:1`),
     contentType: 'ContextModuleSubHeader',
     title: 'Review the module overview:',
     position: pos++,
@@ -231,8 +224,8 @@ function emitChapterModule(
   });
 
   // 2. Module N Overview wiki
-  const overviewId = genCanvasId();
-  const overviewSlug = slug(`module-${chapter.number}-overview-${moduleId.slice(1, 9)}`);
+  const overviewId = gid(`${moduleId}:res:overview`);
+  const overviewSlug = slug(`module-${chapter.number}-overview-${overviewId.slice(1, 9)}`);
   const overviewPath = `wiki_content/${overviewSlug}.html`;
   files[overviewPath] = wikiPageHtml(
     `Module ${chapter.number} Overview`,
@@ -246,7 +239,7 @@ function emitChapterModule(
     files: [overviewPath],
   });
   items.push({
-    identifier: genCanvasId(),
+    identifier: gid(`${moduleId}:item:overview`),
     contentType: 'WikiPage',
     title: `Module ${chapter.number} Overview`,
     identifierRef: overviewId,
@@ -256,7 +249,7 @@ function emitChapterModule(
 
   // 3. Sub-header: "Read/View the following materials:"
   items.push({
-    identifier: genCanvasId(),
+    identifier: gid(`${moduleId}:subhdr:2`),
     contentType: 'ContextModuleSubHeader',
     title: 'Read/View the following materials:',
     position: pos++,
@@ -264,8 +257,9 @@ function emitChapterModule(
   });
 
   // 4. MN Instructor Notes pages (≥1)
-  for (const note of tc.instructorNotes) {
-    const noteId = genCanvasId();
+  for (let i = 0; i < tc.instructorNotes.length; i++) {
+    const note = tc.instructorNotes[i];
+    const noteId = gid(`${moduleId}:res:note:${i + 1}`);
     const fullTitle = `M${chapter.number} Instructor Notes: ${note.title}`;
     const notePath = `wiki_content/${slug(`m${chapter.number}-instructor-notes-${note.title}-${noteId.slice(1, 9)}`)}.html`;
     files[notePath] = wikiPageHtml(fullTitle, noteId, note.htmlContent);
@@ -276,7 +270,7 @@ function emitChapterModule(
       files: [notePath],
     });
     items.push({
-      identifier: genCanvasId(),
+      identifier: gid(`${moduleId}:item:note:${i + 1}`),
       contentType: 'WikiPage',
       title: fullTitle,
       identifierRef: noteId,
@@ -287,7 +281,7 @@ function emitChapterModule(
 
   // 5. Sub-header: "Complete the following items by the due date:"
   items.push({
-    identifier: genCanvasId(),
+    identifier: gid(`${moduleId}:subhdr:3`),
     contentType: 'ContextModuleSubHeader',
     title: 'Complete the following items by the due date:',
     position: pos++,
@@ -295,7 +289,7 @@ function emitChapterModule(
   });
 
   // 6. MN Discussion (always 1)
-  const discId = genCanvasId();
+  const discId = gid(`${moduleId}:res:discussion`);
   const fullDiscTitle = `M${chapter.number} Discussion: ${tc.discussion.title}`;
   const discPath = `${discId}.xml`;
   const discMetaPath = `${discId}-meta.xml`;
@@ -308,7 +302,7 @@ function emitChapterModule(
     files: [discPath, discMetaPath],
   });
   items.push({
-    identifier: genCanvasId(),
+    identifier: gid(`${moduleId}:item:discussion`),
     contentType: 'DiscussionTopic',
     title: fullDiscTitle,
     identifierRef: discId,
@@ -622,8 +616,9 @@ export async function assembleTemplateImscc(
   const newModules: NewModule[] = [];
   const newResources: NewResource[] = [];
   let positionCursor = verbatimModules.length + 1;
+  const courseSeed = slug(effectiveTitle) || 'course';
   for (const ch of chapters) {
-    const result = emitChapterModule(positionCursor, ch);
+    const result = emitChapterModule(positionCursor, ch, courseSeed);
     if (!result) continue;
     newModules.push(result.module);
     newResources.push(...result.resources);
