@@ -4,9 +4,9 @@
 # Reproducible and resumable. Run it on an Ubuntu 22.04/24.04 box (a VM is ideal) that has
 # Docker + the compose plugin, git, python3, openssl and curl, and ~8 GB RAM (+ swap), ~60 GB disk.
 #
-#   CCT_LAN_HOST=192.168.1.139 ./setup-canvas.sh          # full build (30–90 min the first time)
-#   CCT_LAN_HOST=192.168.1.139 ./setup-canvas.sh fixes    # only (re)apply the config/dependency fixes
-#   CCT_LAN_HOST=192.168.1.139 ./setup-canvas.sh smoke    # only check that it is up and QTI is enabled
+#   CCT_LAN_HOST=<canvas-host> ./setup-canvas.sh          # full build (30–90 min the first time)
+#   CCT_LAN_HOST=<canvas-host> ./setup-canvas.sh fixes    # only (re)apply the config/dependency fixes
+#   CCT_LAN_HOST=<canvas-host> ./setup-canvas.sh smoke    # only check that it is up and QTI is enabled
 #
 # Phases that finished are recorded in $CANVAS_DIR/.cct/state/; a re-run skips them
 # (SETUP_FORCE=1 redoes everything). Progress lines start with "PHASE".
@@ -35,7 +35,7 @@ QTI_REF="aab28af7a05142140c6fd2f45ed67a4c925a7d1b"      # 2026-03-23
 PLATFORM_ALERTS_VERSION="1.0.1"
 
 CANVAS_DIR="${CANVAS_DIR:-$HOME/canvas-lms}"
-LAN_HOST="${CCT_LAN_HOST:?set CCT_LAN_HOST to the address you will browse to, e.g. 192.168.1.139}"
+LAN_HOST="${CCT_LAN_HOST:?set CCT_LAN_HOST to the address you will browse to, e.g. 192.168.1.50}"
 PORT="${CCT_PORT:-3000}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@canvas-test.local}"
 ADMIN_FILE="$HOME/canvas-admin.txt"

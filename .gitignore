@@ -50,3 +50,10 @@ public/voices/
 
 # Pitch scratch — not part of the app
 pitch/
+
+# Secrets — keys are entered in the app / passed via env vars, never committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
