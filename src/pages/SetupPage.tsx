@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../store/courseStore';
-import { useApiStore } from '../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
-import { MODELS } from '../services/claude/client';
+import { MODELS, DEFAULT_GEMINI_MODEL } from '../services/claude/client';
 import { TemplatePicker } from '../components/setup/TemplatePicker';
 import { CourseOutlineUpload } from '../components/setup/CourseOutlineUpload';
 import { STAGES } from '../types/course';
@@ -110,7 +110,7 @@ const STARTER_BRIEFS: StarterBrief[] = [
 export function SetupPage() {
   const navigate = useNavigate();
   const { setup, updateSetup, setStage, completeStage, resetDownstream, syllabus, chapters, currentStage } = useCourseStore();
-  const { provider, claudeApiKey, claudeKeyValid, ollamaApiKey, ollamaKeyValid } = useApiStore();
+  const llm = selectActiveLlm(useApiStore());
   const {
     openKeysOnNextSetupVisit,
     setOpenKeysOnNextSetupVisit,
@@ -164,10 +164,9 @@ export function SetupPage() {
 
   const hasTopic = setup.topic.trim().length > 10;
   // The key that gates "Begin" is whichever course-content provider is active.
-  const providerLabel = provider === 'ollama' ? 'Ollama' : 'Anthropic';
-  const activeKey = provider === 'ollama' ? ollamaApiKey : claudeApiKey;
-  const activeKeyValid = provider === 'ollama' ? ollamaKeyValid : claudeKeyValid;
-  const hasApiKey = activeKey.trim().length > 0;
+  const providerLabel = llm.label;
+  const activeKeyValid = llm.keyValid;
+  const hasApiKey = llm.hasKey;
   const canProceed = hasTopic && hasApiKey;
   // Anything downstream that "Begin" would wipe.
   const hasDownstream = !!syllabus || chapters.length > 0;
@@ -1180,17 +1179,25 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
     setAdvancedMode,
     ollamaApiKey,
     ollamaModel,
+    geminiApiKey,
+    geminiModel,
     tavilyApiKey,
     ollamaKeyValid,
+    geminiKeyValid,
     tavilyKeyValid,
     isValidatingOllama,
+    isValidatingGemini,
     isValidatingTavily,
     setOllamaApiKey,
     setOllamaModel,
+    setGeminiApiKey,
+    setGeminiModel,
     setTavilyApiKey,
     setOllamaKeyValid,
+    setGeminiKeyValid,
     setTavilyKeyValid,
     setIsValidatingOllama,
+    setIsValidatingGemini,
     setIsValidatingTavily,
     claudeApiKey,
     openaiApiKey,
@@ -1290,6 +1297,26 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [ollamaApiKey, ollamaModel, setOllamaKeyValid, setIsValidatingOllama]);
 
+  const validateGemini = useCallback(async () => {
+    if (!geminiApiKey.trim()) return;
+    setIsValidatingGemini(true);
+    try {
+      // Fetching the chosen model proves BOTH the key and the model id: 200 = ok,
+      // 404 = unknown model, 400/403 = bad key. Google answers CORS, so this is a
+      // direct browser call (no proxy), with the key in a header rather than the URL.
+      const model = geminiModel.trim() || DEFAULT_GEMINI_MODEL;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`,
+        { headers: { 'x-goog-api-key': geminiApiKey.trim() } },
+      );
+      setGeminiKeyValid(res.ok);
+    } catch {
+      setGeminiKeyValid(false);
+    } finally {
+      setIsValidatingGemini(false);
+    }
+  }, [geminiApiKey, geminiModel, setGeminiKeyValid, setIsValidatingGemini]);
+
   const validateTavily = useCallback(async () => {
     if (!tavilyApiKey.trim()) return;
     setIsValidatingTavily(true);
@@ -1317,6 +1344,7 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
     validatedRef.current = true;
     if (claudeApiKey.trim() && claudeKeyValid === null) void validateClaude();
     if (ollamaApiKey.trim() && ollamaKeyValid === null) void validateOllama();
+    if (geminiApiKey.trim() && geminiKeyValid === null) void validateGemini();
     if (tavilyApiKey.trim() && tavilyKeyValid === null) void validateTavily();
     if (openaiApiKey.trim() && openaiKeyValid === null) void validateOpenai();
     if (elevenLabsApiKey.trim() && elevenLabsKeyValid === null) {
@@ -1325,10 +1353,13 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
   }, [
     open,
     ollamaApiKey,
+    geminiApiKey,
     tavilyApiKey,
     ollamaKeyValid,
+    geminiKeyValid,
     tavilyKeyValid,
     validateOllama,
+    validateGemini,
     validateTavily,
     claudeApiKey,
     openaiApiKey,
@@ -1364,12 +1395,14 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
     elevenLabsApiKey,
   );
   const ollamaStatus = statusFor(isValidatingOllama, ollamaKeyValid, ollamaApiKey);
+  const geminiStatus = statusFor(isValidatingGemini, geminiKeyValid, geminiApiKey);
   const tavilyStatus = statusFor(isValidatingTavily, tavilyKeyValid, tavilyApiKey);
   const anyValidating =
     isValidatingClaude ||
     isValidatingOpenai ||
     isValidatingElevenLabs ||
     isValidatingOllama ||
+    isValidatingGemini ||
     isValidatingTavily;
 
   const linkStyle: React.CSSProperties = {
@@ -1404,6 +1437,7 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
             onClick={() => {
               if (claudeApiKey.trim()) void validateClaude();
               if (ollamaApiKey.trim()) void validateOllama();
+              if (geminiApiKey.trim()) void validateGemini();
               if (tavilyApiKey.trim()) void validateTavily();
               if (openaiApiKey.trim()) void validateOpenai();
               if (elevenLabsApiKey.trim()) void validateElevenLabs();
@@ -1411,6 +1445,7 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
             disabled={
               (!claudeApiKey.trim() &&
                 !ollamaApiKey.trim() &&
+                !geminiApiKey.trim() &&
                 !tavilyApiKey.trim() &&
                 !openaiApiKey.trim() &&
                 !elevenLabsApiKey.trim()) ||
@@ -1430,7 +1465,7 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
           >
             Course-content provider
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
             <ChoicePill
               selected={provider === 'anthropic'}
               onClick={() => setProvider('anthropic')}
@@ -1438,10 +1473,16 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
               sub="Best quality"
             />
             <ChoicePill
+              selected={provider === 'gemini'}
+              onClick={() => setProvider('gemini')}
+              label="Gemini"
+              sub="Google"
+            />
+            <ChoicePill
               selected={provider === 'ollama'}
               onClick={() => setProvider('ollama')}
               label="Ollama Cloud"
-              sub="Open-weight alternative"
+              sub="Open-weight"
             />
           </div>
         </div>
@@ -1559,6 +1600,55 @@ function ApiKeysModal({ open, onClose }: { open: boolean; onClose: () => void })
                 style={linkStyle}
               >
                 Browse cloud models ↗
+              </a>
+            }
+          />
+        )}
+        <CodexInput
+          label={provider === 'gemini' ? 'Gemini · required' : 'Gemini · optional'}
+          type="password"
+          value={geminiApiKey}
+          onChange={(e) => setGeminiApiKey(e.target.value)}
+          onBlur={() => {
+            if (geminiApiKey.trim() && geminiKeyValid === null) void validateGemini();
+          }}
+          placeholder="AIza…"
+          suffix={
+            geminiStatus ? (
+              <span style={{ color: geminiStatus.color }}>{geminiStatus.text}</span>
+            ) : undefined
+          }
+          hint={
+            <>
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={linkStyle}
+              >
+                Where do Gemini keys come from? ↗
+              </a>
+              <span className="cb-italic" style={{ color: 'var(--cb-text-muted)', fontSize: 13 }}>
+                {' '}
+                · On Google&apos;s free tier, prompts may be used to improve its products — check your plan.
+              </span>
+            </>
+          }
+        />
+        {provider === 'gemini' && (
+          <CodexInput
+            label="Gemini model"
+            value={geminiModel}
+            onChange={(e) => setGeminiModel(e.target.value)}
+            placeholder={DEFAULT_GEMINI_MODEL}
+            hint={
+              <a
+                href="https://ai.google.dev/gemini-api/docs/models"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={linkStyle}
+              >
+                Model ids change often — see Google&apos;s list ↗
               </a>
             }
           />

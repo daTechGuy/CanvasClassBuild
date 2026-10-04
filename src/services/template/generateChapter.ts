@@ -26,6 +26,9 @@ export interface GenerateTemplateChapterInput {
   /** Ollama-specific overrides for non-browser callers. */
   ollamaApiKey?: string;
   ollamaModel?: string;
+  /** Gemini overrides for non-browser callers (CLI). */
+  geminiApiKey?: string;
+  geminiModel?: string;
   /** Optional cancellation — aborting rejects with the SDK's abort error. */
   signal?: AbortSignal;
   onText?: (text: string) => void;
@@ -45,7 +48,7 @@ export interface GenerateTemplateChapterResult {
 export async function generateTemplateChapter(
   input: GenerateTemplateChapterInput,
 ): Promise<GenerateTemplateChapterResult> {
-  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, provider, ollamaApiKey, ollamaModel, signal, onText, onError } = input;
+  const { apiKey, setup, chapter, courseTitle, courseOverview, examplePatternContent, provider, ollamaApiKey, ollamaModel, geminiApiKey, geminiModel, signal, onText, onError } = input;
 
   const { systemPrompt, userMessage } = buildTemplateChapterPrompt({
     setup,
@@ -60,9 +63,9 @@ export async function generateTemplateChapter(
   const rawText = await streamWithRetry(
     {
       apiKey,
-      // Don't force MODELS.sonnet when the caller picked Ollama — the
-      // Ollama backend would 404 trying to find a Claude model name.
-      model: provider === 'ollama' ? undefined : MODELS.sonnet,
+      // Don't force MODELS.sonnet when the caller picked a non-Claude provider —
+      // it would 404 trying to find a Claude model name.
+      model: provider && provider !== 'anthropic' ? undefined : MODELS.sonnet,
       system: systemPrompt,
       messages,
       thinkingBudget: 'medium',
@@ -70,6 +73,8 @@ export async function generateTemplateChapter(
       provider,
       ollamaApiKey,
       ollamaModel,
+      geminiApiKey,
+      geminiModel,
       signal,
     },
     {

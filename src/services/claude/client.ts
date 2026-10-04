@@ -27,6 +27,15 @@ export const OLLAMA_MODELS = {
 
 export const DEFAULT_OLLAMA_MODEL = OLLAMA_MODELS.default;
 
+// Gemini ids change often — the Setup page lets the user type any model id; these are
+// just the defaults (https://ai.google.dev/gemini-api/docs/models).
+export const GEMINI_MODELS = {
+  default: 'gemini-3.8-flash',
+  pro: 'gemini-3.1-pro-preview',
+} as const;
+
+export const DEFAULT_GEMINI_MODEL = GEMINI_MODELS.default;
+
 export type ThinkingBudget = 'max' | 'high' | 'medium' | 'low';
 
 const BUDGET_TOKENS: Record<ThinkingBudget, number> = {

@@ -2,38 +2,47 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { useApiStore } from '../../store/apiStore';
 import { streamMessageAnthropic, sendMessageAnthropic } from './anthropic';
 import { streamMessageOllama } from './ollama';
+import { streamMessageGemini } from './gemini';
 import type { StreamCallbacks, StreamOptions, LlmProvider } from './types';
 
 export type { LlmProvider, StreamCallbacks, StreamOptions, WebSearchResult, ThinkingBudget } from './types';
 
 /**
+ * Call sites pass Anthropic model ids (MODELS.opus …). Those mean nothing to a
+ * non-Claude provider, so only an explicit non-Claude override is honoured.
+ */
+function explicitNonClaudeModel(model?: string): string | undefined {
+  return model && !model.startsWith('claude-') ? model : undefined;
+}
+
+/**
  * Resolve the provider + concrete (apiKey, model) pair for this call. An
  * explicit `provider` in options wins; otherwise we read the active provider
- * from apiStore. On Ollama, the apiKey/model passed in (which call sites
- * derive from the legacy Anthropic store fields) is overridden with the
- * Ollama-specific store fields.
+ * from apiStore. On Ollama/Gemini, the apiKey/model passed in (which call sites
+ * derive from the legacy Anthropic store fields) is overridden with that
+ * provider's own store fields.
  */
 function resolveProvider(options: StreamOptions): {
   provider: LlmProvider;
   apiKey: string;
   model?: string;
 } {
-  const explicit = options.provider;
   const state = useApiStore.getState();
-  const provider = explicit ?? state.provider;
+  const provider = options.provider ?? state.provider;
+  // Explicit overrides win (the CLI doesn't touch the IndexedDB-backed apiStore);
+  // otherwise fall back to the store, as in the browser flow.
   if (provider === 'ollama') {
-    // Prefer explicit overrides (used by the CLI, which doesn't touch
-    // the IndexedDB-backed apiStore). Fall back to store state in the
-    // browser flow.
     return {
       provider,
       apiKey: options.ollamaApiKey || state.ollamaApiKey,
-      // Call sites pass Anthropic model ids (MODELS.opus etc.); those mean
-      // nothing to Ollama, so only honour an explicit non-Claude override.
-      model:
-        (options.model && !options.model.startsWith('claude-') ? options.model : undefined) ||
-        options.ollamaModel ||
-        state.ollamaModel,
+      model: explicitNonClaudeModel(options.model) || options.ollamaModel || state.ollamaModel,
+    };
+  }
+  if (provider === 'gemini') {
+    return {
+      provider,
+      apiKey: options.geminiApiKey || state.geminiApiKey,
+      model: explicitNonClaudeModel(options.model) || options.geminiModel || state.geminiModel,
     };
   }
   return { provider, apiKey: options.apiKey, model: options.model };
@@ -47,6 +56,9 @@ export async function streamMessage(
   const resolved: StreamOptions = { ...options, apiKey, model };
   if (provider === 'ollama') {
     return streamMessageOllama(resolved, callbacks);
+  }
+  if (provider === 'gemini') {
+    return streamMessageGemini(resolved, callbacks);
   }
   return streamMessageAnthropic(resolved, callbacks);
 }

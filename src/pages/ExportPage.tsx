@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useCourseStore } from '../store/courseStore';
-import { useApiStore } from '../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
 import { streamMessage } from '../services/claude/streaming';
 import { MODELS } from '../services/claude/client';
@@ -89,7 +89,9 @@ function buildClassReadme(
 export function ExportPage() {
   const { syllabus, chapters, researchDossiers, addChapter, updateChapter, setSlideImage, setup, updateSetup, curriculumMap, setCurriculumMap, outlineFields } = useCourseStore();
   const currentThemeId = (setup.themeId as ChapterThemeId | undefined) ?? DEFAULT_CHAPTER_THEME_ID;
-  const { claudeApiKey, openaiApiKey } = useApiStore();
+  const apiState = useApiStore();
+  const { claudeApiKey, openaiApiKey } = apiState;
+  const llm = selectActiveLlm(apiState);
   const { isGenerating, setIsGenerating, setError, error } = useUiStore();
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -524,7 +526,7 @@ export function ExportPage() {
     curriculumMap.syllabusHash !== currentSyllabusHash;
 
   const generateLearningOutcomes = useCallback(async () => {
-    if (!syllabus || !claudeApiKey || isGeneratingOutcomes) return;
+    if (!syllabus || !llm.hasKey || isGeneratingOutcomes) return;
     setIsGeneratingOutcomes(true);
     setOutcomesError(null);
     outcomesStreamRef.current = '';
@@ -564,6 +566,7 @@ export function ExportPage() {
   }, [
     syllabus,
     claudeApiKey,
+    llm.hasKey,
     isGeneratingOutcomes,
     currentSyllabusHash,
     setCurriculumMap,
@@ -1406,7 +1409,7 @@ export function ExportPage() {
           onGenerate={() => void generateLearningOutcomes()}
           onDownloadHtml={handleDownloadOutcomesHtml}
           onDownloadCsv={handleDownloadOutcomesCsv}
-          canGenerate={!!claudeApiKey && !isGenerating}
+          canGenerate={llm.hasKey && !isGenerating}
         />
 
         <div className="cb-folio">— 05 —</div>

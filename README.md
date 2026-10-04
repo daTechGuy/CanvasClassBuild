@@ -26,7 +26,7 @@ A fork of [ClassBuild](https://github.com/jtangen/classbuild) by Jason Tangen, r
 | Batch generation: "Generate All Canvas Modules" for the whole course at once | Build header |
 | Export an `.imscc` that mirrors the template's structure: verbatim modules carry through untouched, pattern modules replaced by generated content, LTI links + web_resources passed through | "Export for Canvas (.imscc)" button |
 | Upload a course-outline `.docx` and have an LLM extract title / description / course information / course materials → populates Canvas's Syllabus tab body at export time | Setup page |
-| Pluggable LLM provider — **Anthropic (Claude)** or **Ollama Cloud** for course-content generation | Setup → Course-content provider |
+| Pluggable LLM provider — **Anthropic (Claude)**, **Google Gemini** or **Ollama Cloud** for course-content generation | Setup → Course-content provider |
 | Pluggable research backend — **Claude web search**, **Tavily**, or **Wikipedia** | Setup → Research backend |
 | Advanced-mode toggle — hides multimedia outputs (slides, audio, infographic, weekly challenge, activities) by default to keep the Canvas-focused happy path tight | Setup page bottom |
 
@@ -48,6 +48,7 @@ Open [localhost:5173](http://localhost:5173).
 | Provider | Required when… | What it does |
 |---|---|---|
 | Anthropic Claude | LLM provider = Anthropic, **OR** research backend = Claude web search | Course-content generation; Claude's built-in web search for the Research stage |
+| Google Gemini | LLM provider = Gemini | Course-content generation, called straight from the browser (Google allows CORS — no proxy). Get a key at aistudio.google.com/apikey. The model id is editable (default `gemini-3.8-flash`). Doesn't run Claude's web-search tool, so pair it with Tavily or Wikipedia research. On Google's free tier prompts may be used to improve its products — check your plan |
 | Ollama Cloud | LLM provider = Ollama Cloud | Course-content generation. Free tier doesn't include cloud models — see ollama.com/settings/keys |
 | Tavily | Research backend = Tavily | Web search for the Research stage. Free tier covers ~1,000 searches/month |
 | OpenAI | Advanced mode + you want slide images / chapter figures | Image generation (gpt-image-2, optional) |
@@ -154,11 +155,20 @@ Flags:
 | `--length` | `standard` | `concise` / `standard` / `comprehensive` |
 | `--cohort` | `60` | Class size |
 | `--notes` | — | Additional learner context |
-| `--provider` | `anthropic` | LLM provider — `anthropic` or `ollama`. With `ollama`, set `OLLAMA_API_KEY`; with `anthropic`, set `ANTHROPIC_API_KEY` |
+| `--provider` | `anthropic` | LLM provider — `anthropic`, `gemini` or `ollama`. Set `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` or `OLLAMA_API_KEY` to match |
 | `--ollama-model` | `gpt-oss:120b-cloud` | Ollama model used when `--provider ollama` |
+| `--gemini-model` | `gemini-3.8-flash` | Gemini model used when `--provider gemini` |
 | `--concurrency` | `3` | Parallel chapters during Canvas Module generation |
 | `--syllabus` | — | Path to existing `syllabus.json` (skip regeneration) |
 | `--skip-canvas-module` | `false` | Skip per-chapter content generation (for fast manifest-only test runs) |
+
+Gemini example (`GEMINI_API_KEY` must be set in your environment):
+
+```bash
+npx tsx scripts/canvas-course.ts \n  --provider gemini \n  --topic "Statistics for Data Science" \n  --template ./template.imscc \n  --chapters 8 \n  --output ./output/stats
+```
+
+Before relying on a Gemini model, run `npm run smoke:gemini` (reads `GEMINI_API_KEY` from your environment): it exercises plain text, streaming, thinking, structured-JSON quiz output and the error paths against the live API.
 
 Ollama example:
 
@@ -172,7 +182,7 @@ OLLAMA_API_KEY=... npx tsx scripts/canvas-course.ts \
   --output ./output/stats
 ```
 
-If both `OLLAMA_API_KEY` and `ANTHROPIC_API_KEY` are set, outline-DOCX extraction always uses Claude (its instruction-following on the small JSON-extraction task is more reliable) regardless of `--provider`.
+If `ANTHROPIC_API_KEY` is set alongside `--provider gemini` or `ollama`, outline-DOCX extraction always uses Claude (its instruction-following on the small JSON-extraction task is more reliable) regardless of `--provider`.
 
 ### Original ClassBuild CLI ([`scripts/generate-course.ts`](scripts/generate-course.ts))
 
@@ -195,6 +205,7 @@ src/
     llm/
       anthropic.ts           # Anthropic SDK streaming
       ollama.ts              # Ollama Cloud NDJSON streaming
+      gemini.ts              # Google Gemini SSE streaming (direct from the browser)
   store/
     templateStore.ts         # uploaded templates (parsed + raw .imscc Blob)
   pages/
@@ -209,7 +220,7 @@ src/
 
 ## Built with
 
-React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) · Ollama Cloud · Tavily · OpenAI gpt-image-2 · ElevenLabs
+React 19 · Vite 7 · TypeScript 5.9 · Tailwind CSS 4 · Zustand · JSZip · mammoth.js · Claude (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) · Google Gemini · Ollama Cloud · Tavily · OpenAI gpt-image-2 · ElevenLabs
 
 ## Contributing
 

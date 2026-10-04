@@ -63,8 +63,9 @@ const { values } = parseArgs({
     concurrency: { type: 'string', default: '3' },
     syllabus: { type: 'string' }, // path to existing syllabus.json (skip regeneration)
     'skip-canvas-module': { type: 'boolean', default: false },
-    provider: { type: 'string', default: 'anthropic' }, // anthropic | ollama
+    provider: { type: 'string', default: 'anthropic' }, // anthropic | ollama | gemini
     'ollama-model': { type: 'string', default: 'gpt-oss:120b-cloud' },
+    'gemini-model': { type: 'string', default: 'gemini-3.8-flash' },
   },
   strict: true,
 });
@@ -80,13 +81,15 @@ if (!values.template) {
   process.exit(1);
 }
 
-type Provider = 'anthropic' | 'ollama';
+type Provider = 'anthropic' | 'ollama' | 'gemini';
 const PROVIDER: Provider =
-  values.provider === 'ollama' ? 'ollama' : 'anthropic';
+  values.provider === 'ollama' ? 'ollama' : values.provider === 'gemini' ? 'gemini' : 'anthropic';
 const OLLAMA_MODEL = values['ollama-model']!;
+const GEMINI_MODEL = values['gemini-model']!;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (PROVIDER === 'anthropic' && !ANTHROPIC_API_KEY) {
   console.error('Error: ANTHROPIC_API_KEY environment variable is required for --provider anthropic');
@@ -96,12 +99,28 @@ if (PROVIDER === 'ollama' && !OLLAMA_API_KEY) {
   console.error('Error: OLLAMA_API_KEY environment variable is required for --provider ollama');
   process.exit(1);
 }
+if (PROVIDER === 'gemini' && !GEMINI_API_KEY) {
+  console.error('Error: GEMINI_API_KEY environment variable is required for --provider gemini');
+  process.exit(1);
+}
+
+/** Per-call provider overrides for the LLM router (the CLI never touches the browser store). */
+function providerOptions(p: Provider) {
+  return {
+    provider: p,
+    ollamaApiKey: p === 'ollama' ? OLLAMA_API_KEY : undefined,
+    ollamaModel: p === 'ollama' ? OLLAMA_MODEL : undefined,
+    geminiApiKey: p === 'gemini' ? GEMINI_API_KEY : undefined,
+    geminiModel: p === 'gemini' ? GEMINI_MODEL : undefined,
+  };
+}
 
 // The outline-DOCX extraction step always runs on Claude when available
 // (it's a one-shot JSON extraction that benefits from instruction-following
-// quality). If Anthropic isn't configured, fall back to Ollama.
-const OUTLINE_KEY = ANTHROPIC_API_KEY ?? OLLAMA_API_KEY!;
-const OUTLINE_PROVIDER: Provider = ANTHROPIC_API_KEY ? 'anthropic' : 'ollama';
+// quality). If Anthropic isn't configured, fall back to the chosen provider
+// (its key was validated above).
+const OUTLINE_PROVIDER: Provider = ANTHROPIC_API_KEY ? 'anthropic' : PROVIDER;
+const OUTLINE_KEY = ANTHROPIC_API_KEY ?? (PROVIDER === 'gemini' ? GEMINI_API_KEY! : OLLAMA_API_KEY!);
 
 const setup: CourseSetup = {
   topic: values.topic,
@@ -136,11 +155,11 @@ function printUsage() {
       '    [--level advanced-undergrad] \\\n' +
       '    [--length concise|standard|comprehensive] \\\n' +
       '    [--notes "Additional learner context"] \\\n' +
-      '    [--provider anthropic|ollama] \\\n' +
-      '    [--ollama-model gpt-oss:120b-cloud] \\\n' +
+      '    [--provider anthropic|ollama|gemini] \\\n' +
+      '    [--ollama-model gpt-oss:120b-cloud] [--gemini-model gemini-3.8-flash] \\\n' +
       '    [--concurrency 3] \\\n' +
       '    [--syllabus ./existing-syllabus.json]\n' +
-      '\nFor Ollama: set OLLAMA_API_KEY (and optionally ANTHROPIC_API_KEY for\noutline extraction quality if you have it).',
+      '\nFor Ollama: set OLLAMA_API_KEY; for Gemini: set GEMINI_API_KEY (optionally also ANTHROPIC_API_KEY for\noutline extraction quality if you have it).',
   );
 }
 
@@ -218,9 +237,7 @@ async function main() {
     const result = await extractOutlineFields({
       apiKey: OUTLINE_KEY,
       rawText,
-      provider: OUTLINE_PROVIDER,
-      ollamaApiKey: OUTLINE_PROVIDER === 'ollama' ? OLLAMA_API_KEY ?? undefined : undefined,
-      ollamaModel: OUTLINE_PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
+      ...providerOptions(OUTLINE_PROVIDER),
     });
     outlineFields = result.fields;
     const found = Object.keys(outlineFields).filter(
@@ -248,9 +265,7 @@ async function main() {
         messages: [{ role: 'user', content: userMessage }],
         thinkingBudget: 'high',
         maxTokens: 16000,
-        provider: PROVIDER,
-        ollamaApiKey: PROVIDER === 'ollama' ? OLLAMA_API_KEY! : undefined,
-        ollamaModel: PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
+        ...providerOptions(PROVIDER),
       },
       {},
     );
@@ -282,9 +297,7 @@ async function main() {
           courseTitle: syllabus.courseTitle,
           courseOverview: syllabus.courseOverview,
           examplePatternContent: template.examplePatternContent,
-          provider: PROVIDER,
-          ollamaApiKey: PROVIDER === 'ollama' ? OLLAMA_API_KEY! : undefined,
-          ollamaModel: PROVIDER === 'ollama' ? OLLAMA_MODEL : undefined,
+          ...providerOptions(PROVIDER),
         });
         const target = chapters.find((c) => c.number === ch.number);
         if (target) target.templateContent = content;

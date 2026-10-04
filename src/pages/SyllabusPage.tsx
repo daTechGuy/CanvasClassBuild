@@ -8,7 +8,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../store/courseStore';
 import { TemplateTitleEditor } from '../components/syllabus/TemplateTitleEditor';
-import { useApiStore } from '../store/apiStore';
+import { useApiStore, selectActiveLlm } from '../store/apiStore';
 import { useUiStore } from '../store/uiStore';
 import { streamMessage } from '../services/claude/streaming';
 import { MODELS } from '../services/claude/client';
@@ -43,7 +43,9 @@ export function SyllabusPage() {
     researchDossiers,
     resetDownstream,
   } = useCourseStore();
-  const { claudeApiKey } = useApiStore();
+  const apiState = useApiStore();
+  const { claudeApiKey } = apiState;
+  const llm = selectActiveLlm(apiState);
   const { isGenerating, setIsGenerating, error, setError } = useUiStore();
 
   const [isThinking, setIsThinking] = useState(false);
@@ -143,7 +145,7 @@ export function SyllabusPage() {
   );
 
   useEffect(() => {
-    if (!syllabus && !isGenerating && claudeApiKey && !generationStarted.current) {
+    if (!syllabus && !isGenerating && llm.hasKey && !generationStarted.current) {
       generationStarted.current = true;
       void generateSyllabus();
     }

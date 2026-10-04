@@ -21,7 +21,11 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
   const status = getStatus(err);
 
   // Auth / billing
-  if (status === 401 || /invalid[_\s-]?api[_\s-]?key|unauthori[sz]ed|authentication/i.test(message)) {
+  // (Google words a bad key as "API key not valid" / "API key expired" / API_KEY_INVALID.)
+  if (
+    status === 401 ||
+    /invalid[_\s-]?api[_\s-]?key|api[_\s-]?key[_\s-]*(not valid|invalid|expired)|unauthori[sz]ed|authentication/i.test(message)
+  ) {
     return 'API key rejected. Check your key in Setup.';
   }
   if (status === 403 || /permission_denied|forbidden/i.test(message)) {
@@ -40,8 +44,12 @@ export function friendlyError(err: unknown, fallback = 'Something went wrong. Tr
   }
 
   // Input / content
-  if (/content[_\s]?filter|prohibited[_\s]?content|safety/i.test(message)) {
+  if (/content[_\s]?filter|prohibited[_\s]?content|safety|blocked the response/i.test(message)) {
     return 'The model declined to respond to that prompt. Try softer wording or a different angle.';
+  }
+  // Typo'd / retired model id (Gemini, Ollama and Anthropic all 404 on an unknown model).
+  if (status === 404 || /not_found|is not found for api version|model .*not found/i.test(message)) {
+    return 'That model was not found. Check the model name in Setup → API keys.';
   }
   if (status === 400 || /invalid_request|bad request/i.test(message)) {
     return 'The request was rejected. Try regenerating — if it keeps failing, refine your topic.';
